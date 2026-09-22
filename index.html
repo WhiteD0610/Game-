@@ -115,9 +115,12 @@
       <div><i style="background:#b98cff"></i>停滞 ── 4秒間、追跡者が鈍る</div>
       <div><i style="background:#7ee0a8"></i>衝撃 ── 周囲を吹き飛ばし、最寄りの1体を消す</div>
     </div>
+    <p style="font-size:13px">スティック＝固定の円を傾けて移動（位置変更可）／なぞる＝触れた地点へ自機が追従</p>
+    <div class="legend" style="display:none">
+    </div>
     <button id="btnStart">はじめる</button>
-    <button id="btnStick" class="ghost">スティック表示：自動</button>
-    <div class="keys">画面のどこでも押せば開始 ／ 縦横どちらでもプレイ可。スマホはスティックで移動（位置は変更できます）、PCは <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>・矢印キー</div>
+    <button id="btnStick" class="ghost">操作方式：自動</button>
+    <div class="keys">画面のどこでも押せば開始 ／ 縦横どちらでもプレイ可。スマホはスティック／なぞるを選択（下のボタン）、PCは <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>・矢印キー</div>
   </div>
 
   <div class="sheet" id="over" hidden>
@@ -272,11 +275,12 @@ try { coarse = matchMedia('(pointer: coarse)').matches; } catch(e){}
 let stickMode = 'auto';                    // auto | on | off
 try { stickMode = localStorage.getItem('chaser.stick') || 'auto'; } catch(e){}
 let touchMode = stickMode === 'on' ? true : stickMode === 'off' ? false : coarse;
-const STICK_LABEL = { auto:'自動', on:'常に表示', off:'使わない' };
+const STICK_LABEL = { auto:'自動', on:'スティック', off:'なぞる' };
 function applyStickMode(){
   touchMode = stickMode === 'on' ? true : stickMode === 'off' ? false : coarse;
   el.bar.hidden = !touchMode;
-  el.btnStick.textContent = 'スティック表示：' + STICK_LABEL[stickMode];
+  el.btnStick.textContent = '操作方式：' + STICK_LABEL[stickMode] +
+    (stickMode === 'auto' ? '（' + (touchMode ? 'スティック' : 'なぞる') + '）' : '');
   try { localStorage.setItem('chaser.stick', stickMode); } catch(e){}
   orientCheck();
 }
