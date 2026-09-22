@@ -67,6 +67,11 @@
   }
   .mini:hover{background:rgba(238,243,251,.16);transform:translateX(-50%)}
   .mini[hidden]{display:none}
+  .ghost{
+    background:transparent;color:var(--mist);border:1px solid var(--ai-line);
+    font-size:13px;padding:10px 22px;
+  }
+  .ghost:hover{background:rgba(238,243,251,.08);color:var(--haku)}
   .keys{font-size:13px;color:var(--mist)}
   .keys kbd{display:inline-block;padding:2px 7px;margin:0 1px;border:1px solid var(--ai-line);border-radius:5px;background:rgba(255,255,255,.04);font:inherit;font-size:12px}
   @media (prefers-reduced-motion:reduce){button{transition:none}}
@@ -103,6 +108,7 @@
       <div><i style="background:#7ee0a8"></i>衝撃 ── 周囲を吹き飛ばし、最寄りの1体を消す</div>
     </div>
     <button id="btnStart">はじめる</button>
+    <button id="btnStick" class="ghost">スティック表示：自動</button>
     <div class="keys">画面のどこでも押せば開始 ／ スマホは横向き＋下のスティックで移動（左右入替可）、PCは <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>・矢印キー</div>
   </div>
 
@@ -144,6 +150,7 @@ const el = {
   rotText: document.getElementById('rotText'),
   btnResume: document.getElementById('btnResume'),
   rotIcon: document.getElementById('rotIcon'),
+  btnStick: document.getElementById('btnStick'),
 };
 
 let W = 0, H = 0, S = 1;
@@ -258,12 +265,29 @@ const keys = new Set();
 let pointer = null;
 
 /* ---- 仮想スティック（位置固定） ---- */
-let touchMode = false;
-try { touchMode = matchMedia('(pointer: coarse)').matches; } catch(e){}
+let coarse = false;
+try { coarse = matchMedia('(pointer: coarse)').matches; } catch(e){}
+let stickMode = 'auto';                    // auto | on | off
+try { stickMode = localStorage.getItem('chaser.stick') || 'auto'; } catch(e){}
+let touchMode = stickMode === 'on' ? true : stickMode === 'off' ? false : coarse;
+const STICK_LABEL = { auto:'自動', on:'常に表示', off:'使わない' };
+function applyStickMode(){
+  touchMode = stickMode === 'on' ? true : stickMode === 'off' ? false : coarse;
+  el.side.hidden = !touchMode;
+  el.btnStick.textContent = 'スティック表示：' + STICK_LABEL[stickMode];
+  try { localStorage.setItem('chaser.stick', stickMode); } catch(e){}
+  orientCheck();
+}
+el.btnStick.addEventListener('click', e => {
+  e.stopPropagation();
+  stickMode = stickMode === 'auto' ? 'on' : stickMode === 'on' ? 'off' : 'auto';
+  applyStickMode();
+});
+el.btnStick.addEventListener('pointerup', e => e.stopPropagation());
 let stickSide = 'left';
 try { stickSide = localStorage.getItem('chaser.side') === 'right' ? 'right' : 'left'; } catch(e){}
 const stick = { id:null, active:false, dx:0, dy:0, mag:0 };
-const stickR = () => Math.min(Math.max(Math.min(W, H) * 0.14, 46), 92);
+const stickR = () => Math.min(Math.max(Math.min(W, H) * 0.155, 52), 96);
 function stickPos(){
   const R = stickR(), m = 24 + R;
   return { x: stickSide === 'left' ? m : W - m, y: H - m };
@@ -277,13 +301,11 @@ function stickSet(p){
   stick.mag = Math.min(d / R, 1);
 }
 function setTouchMode(on){
-  if (touchMode === on && el.side.hidden !== on) return;
-  touchMode = on;
-  el.side.hidden = !on;
-  orientCheck();
+  if (on) coarse = true;
+  if (stickMode !== 'auto') return;
+  applyStickMode();
 }
-el.side.hidden = !touchMode;
-orientCheck();
+applyStickMode();
 el.side.addEventListener('click', e => {
   e.stopPropagation();
   stickSide = stickSide === 'left' ? 'right' : 'left';
@@ -812,19 +834,19 @@ function draw(){
   /* 仮想スティック */
   if (touchMode && state === ST.PLAY){
     const c = stickPos(), R = stickR();
-    ctx.fillStyle = 'rgba(238,243,251,' + (stick.active ? .07 : .045) + ')';
+    ctx.fillStyle = 'rgba(238,243,251,' + (stick.active ? .11 : .075) + ')';
     ctx.beginPath(); ctx.arc(c.x, c.y, R, 0, 7); ctx.fill();
-    ctx.strokeStyle = 'rgba(238,243,251,' + (stick.active ? .3 : .16) + ')';
+    ctx.strokeStyle = 'rgba(238,243,251,' + (stick.active ? .42 : .27) + ')';
     ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.arc(c.x, c.y, R, 0, 7); ctx.stroke();
-    ctx.strokeStyle = 'rgba(238,243,251,.10)';
+    ctx.strokeStyle = 'rgba(238,243,251,.18)';
     ctx.beginPath(); ctx.moveTo(c.x - R*.3, c.y); ctx.lineTo(c.x + R*.3, c.y);
     ctx.moveTo(c.x, c.y - R*.3); ctx.lineTo(c.x, c.y + R*.3); ctx.stroke();
     const kx = c.x + stick.dx * stick.mag * R, ky = c.y + stick.dy * stick.mag * R;
     const kr = R * 0.36;
-    ctx.fillStyle = 'rgba(' + (buff.boost > 0 ? KIND.boost.col : '238,243,251') + ',' + (stick.active ? .5 : .28) + ')';
+    ctx.fillStyle = 'rgba(' + (buff.boost > 0 ? KIND.boost.col : '238,243,251') + ',' + (stick.active ? .62 : .42) + ')';
     ctx.beginPath(); ctx.arc(stick.active ? kx : c.x, stick.active ? ky : c.y, kr, 0, 7); ctx.fill();
-    ctx.strokeStyle = 'rgba(238,243,251,' + (stick.active ? .8 : .4) + ')';
+    ctx.strokeStyle = 'rgba(238,243,251,' + (stick.active ? .95 : .6) + ')';
     ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.arc(stick.active ? kx : c.x, stick.active ? ky : c.y, kr, 0, 7); ctx.stroke();
   }
