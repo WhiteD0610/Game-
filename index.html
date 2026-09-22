@@ -120,7 +120,7 @@
     </div>
     <button id="btnStart">はじめる</button>
     <button id="btnStick" class="ghost">操作方式：自動</button>
-    <div class="keys">画面のどこでも押せば開始 ／ 縦横どちらでもプレイ可。スマホはスティック／なぞるを選択（下のボタン）、PCは <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>・矢印キー</div>
+    <div class="keys">縦横どちらでもプレイ可。スマホはスティック／なぞるを選択（下のボタン）、PCは <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>・矢印キー</div>
   </div>
 
   <div class="sheet" id="over" hidden>
@@ -284,12 +284,17 @@ function applyStickMode(){
   try { localStorage.setItem('chaser.stick', stickMode); } catch(e){}
   orientCheck();
 }
-el.btnStick.addEventListener('click', e => {
-  e.stopPropagation();
+let ctrlGuard = 0;
+function cycleCtrl(e){
+  if (e){ e.stopPropagation(); e.preventDefault(); }
+  const now = Date.now();
+  if (now - ctrlGuard < 300) return;
+  ctrlGuard = now;
   stickMode = stickMode === 'auto' ? 'on' : stickMode === 'on' ? 'off' : 'auto';
   applyStickMode();
-});
-el.btnStick.addEventListener('pointerup', e => e.stopPropagation());
+}
+el.btnStick.addEventListener('click', cycleCtrl);
+el.btnStick.addEventListener('touchend', cycleCtrl, { passive:false });
 const stick = { id:null, active:false, dx:0, dy:0, mag:0 };
 const stickR = () => Math.min(Math.max(Math.min(W, H) * 0.155, 52), 96);
 /* 縦・横それぞれの配置を画面比率で保持 */
@@ -339,13 +344,23 @@ function setEditing(on){
   el.btnResetPos.hidden = !on;
   orientCheck();
 }
-el.btnMove.addEventListener('click', e => { e.stopPropagation(); setEditing(!editing); if (!editing) paused = false; });
-el.btnMove.addEventListener('pointerup', e => e.stopPropagation());
-el.btnResetPos.addEventListener('click', e => {
-  e.stopPropagation();
+let moveGuard = 0;
+function toggleMove(e){
+  if (e){ e.stopPropagation(); e.preventDefault(); }
+  const now = Date.now();
+  if (now - moveGuard < 300) return;
+  moveGuard = now;
+  setEditing(!editing);
+  if (!editing) paused = false;
+}
+el.btnMove.addEventListener('click', toggleMove);
+el.btnMove.addEventListener('touchend', toggleMove, { passive:false });
+function resetPos(e){
+  if (e){ e.stopPropagation(); e.preventDefault(); }
   stickAt[orientKey()] = null; saveStickAt();
-});
-el.btnResetPos.addEventListener('pointerup', e => e.stopPropagation());
+}
+el.btnResetPos.addEventListener('click', resetPos);
+el.btnResetPos.addEventListener('touchend', resetPos, { passive:false });
 addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
@@ -357,7 +372,7 @@ addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
 function ptFrom(e){ const r = cv.getBoundingClientRect(); return { x:e.clientX - r.left, y:e.clientY - r.top }; }
 cv.addEventListener('pointerdown', e => {
   if (e.pointerType === 'touch') setTouchMode(true);
-  if (state !== ST.PLAY && !editing){ safeReset(); return; }
+  if (state !== ST.PLAY && !editing) return;   // 開始は「はじめる」ボタンのみ
   const p = ptFrom(e);
   if (editing){ setStickAt(p); stick.id = e.pointerId; try { cv.setPointerCapture(e.pointerId); } catch(err){} return; }
   if (touchMode){
@@ -394,11 +409,13 @@ function safeReset(){
     el.over.hidden = false;
   }
 }
-el.btnResume.addEventListener('click', e => {
-  e.stopPropagation();
+function doResume(e){
+  if (e){ e.stopPropagation(); e.preventDefault(); }
   paused = false; el.rotate.hidden = true;
   last = performance.now();
-});
+}
+el.btnResume.addEventListener('click', doResume);
+el.btnResume.addEventListener('touchend', doResume, { passive:false });
 function arm(node){
   if (!node) return;
   node.addEventListener('click', e => { e.preventDefault(); safeReset(); });
@@ -407,8 +424,6 @@ function arm(node){
 }
 arm(document.getElementById('btnStart'));
 arm(document.getElementById('btnRetry'));
-arm(el.start);
-arm(el.over);
 
 /* ---------- 難易度 ---------- */
 const PSPD = () => 424 * S * (buff.boost > 0 ? 1.45 : 1);
