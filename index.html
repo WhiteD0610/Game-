@@ -59,6 +59,14 @@
   }
   button:hover{background:#fff;transform:translateY(-1px)}
   button:focus-visible{outline:2px solid var(--kin);outline-offset:3px}
+  .mini{
+    position:absolute;left:50%;transform:translateX(-50%);
+    bottom:calc(env(safe-area-inset-bottom,0px) + 12px);
+    font-size:12px;letter-spacing:.06em;padding:9px 16px;
+    background:rgba(238,243,251,.09);color:var(--mist);border:1px solid var(--ai-line);
+  }
+  .mini:hover{background:rgba(238,243,251,.16);transform:translateX(-50%)}
+  .mini[hidden]{display:none}
   .keys{font-size:13px;color:var(--mist)}
   .keys kbd{display:inline-block;padding:2px 7px;margin:0 1px;border:1px solid var(--ai-line);border-radius:5px;background:rgba(255,255,255,.04);font:inherit;font-size:12px}
   @media (prefers-reduced-motion:reduce){button{transition:none}}
@@ -78,6 +86,8 @@
     </div>
   </div>
 
+  <button id="side" class="mini" hidden>操作 左右</button>
+
   <div class="sheet" id="start">
     <h1>逃</h1>
     <div class="rule"></div>
@@ -93,7 +103,7 @@
       <div><i style="background:#7ee0a8"></i>衝撃 ── 周囲を吹き飛ばし、最寄りの1体を消す</div>
     </div>
     <button id="btnStart">はじめる</button>
-    <div class="keys">画面のどこでも押せば開始 ／ PCは <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>・矢印キー、スマホは画面をなぞる</div>
+    <div class="keys">画面のどこでも押せば開始 ／ スマホは横向き＋下のスティックで移動（左右入替可）、PCは <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>・矢印キー</div>
   </div>
 
   <div class="sheet" id="over" hidden>
@@ -103,6 +113,17 @@
     <p id="detail">Lv 1 ／ 追跡者 0</p>
     <button id="btnRetry">もう一度</button>
     <div class="keys"><kbd>R</kbd> でも再開</div>
+  </div>
+
+  <div class="sheet" id="rotate" hidden>
+    <svg id="rotIcon" width="86" height="86" viewBox="0 0 86 86" aria-hidden="true">
+      <rect x="30" y="12" width="26" height="46" rx="4" fill="none" stroke="#eef3fb" stroke-width="2.4"/>
+      <line x1="38" y1="18" x2="48" y2="18" stroke="#7f92b8" stroke-width="2.4" stroke-linecap="round"/>
+      <path d="M22 66 A 22 22 0 0 0 64 66" fill="none" stroke="#e2503f" stroke-width="2.4" stroke-linecap="round"/>
+      <path d="M64 66 l-7 -6 M64 66 l-8 4" fill="none" stroke="#e2503f" stroke-width="2.4" stroke-linecap="round"/>
+    </svg>
+    <p id="rotText">端末を横向きにしてください</p>
+    <button id="btnResume" hidden>再開</button>
   </div>
 </div>
 
@@ -118,6 +139,11 @@ const el = {
   start: document.getElementById('start'), over: document.getElementById('over'),
   finalT: document.getElementById('finalT'), detail: document.getElementById('detail'),
   verdict: document.getElementById('verdict'),
+  side: document.getElementById('side'),
+  rotate: document.getElementById('rotate'),
+  rotText: document.getElementById('rotText'),
+  btnResume: document.getElementById('btnResume'),
+  rotIcon: document.getElementById('rotIcon'),
 };
 
 let W = 0, H = 0, S = 1;
@@ -128,6 +154,7 @@ function resize(){
   cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   S = Math.min(Math.max(Math.min(W, H) / 640, 0.62), 1.55);
+  try { orientCheck(); } catch(e){}   // 初回はまだ未初期化なので無視
 }
 if (typeof ResizeObserver !== 'undefined') { try { new ResizeObserver(resize).observe(cv); } catch(e){} }
 addEventListener('resize', resize);
@@ -135,6 +162,38 @@ addEventListener('orientationchange', resize);
 resize();
 
 const ST = { READY:0, PLAY:1, OVER:2 };
+let paused = false;
+function orientCheck(){
+  if (!el.rotate) return;
+  const portrait = touchMode && H > W * 1.02;
+  if (portrait){
+    if (state === ST.PLAY) paused = true;
+    el.rotText.textContent = '端末を横向きにしてください';
+    el.btnResume.hidden = true;
+    if (el.rotIcon) el.rotIcon.style.opacity = 1;
+    el.rotate.hidden = false;
+  } else if (paused){
+    el.rotText.textContent = '準備ができたら再開';
+    el.btnResume.hidden = false;
+    if (el.rotIcon) el.rotIcon.style.opacity = 0.25;
+    el.rotate.hidden = false;
+  } else {
+    el.rotate.hidden = true;
+  }
+}
+/* 開始時に全画面＋横向き固定を試みる（非対応環境は案内へフォールバック） */
+function goLandscape(){
+  if (!touchMode) return;
+  try {
+    const lock = () => {
+      if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {});
+    };
+    const d = document.documentElement;
+    if (!document.fullscreenElement && d.requestFullscreen){
+      d.requestFullscreen({ navigationUI:'hide' }).then(lock).catch(lock);
+    } else lock();
+  } catch(e){}
+}
 let state = ST.READY;
 let t = 0, level = 1, shake = 0, flash = 0, itemTimer = 0;
 let player = null, foes = [], walls = [], items = [], motes = [], rings = [], best = 0;
@@ -197,6 +256,39 @@ el.best.textContent = '最高 ' + best.toFixed(1) + ' 秒';
 /* ---------- 入力 ---------- */
 const keys = new Set();
 let pointer = null;
+
+/* ---- 仮想スティック（位置固定） ---- */
+let touchMode = false;
+try { touchMode = matchMedia('(pointer: coarse)').matches; } catch(e){}
+let stickSide = 'left';
+try { stickSide = localStorage.getItem('chaser.side') === 'right' ? 'right' : 'left'; } catch(e){}
+const stick = { id:null, active:false, dx:0, dy:0, mag:0 };
+const stickR = () => Math.min(Math.max(Math.min(W, H) * 0.14, 46), 92);
+function stickPos(){
+  const R = stickR(), m = 24 + R;
+  return { x: stickSide === 'left' ? m : W - m, y: H - m };
+}
+function stickSet(p){
+  const c = stickPos(), R = stickR();
+  let dx = p.x - c.x, dy = p.y - c.y;
+  const d = Math.hypot(dx, dy);
+  if (d < 1){ stick.mag = 0; return; }
+  stick.dx = dx / d; stick.dy = dy / d;
+  stick.mag = Math.min(d / R, 1);
+}
+function setTouchMode(on){
+  if (touchMode === on && el.side.hidden !== on) return;
+  touchMode = on;
+  el.side.hidden = !on;
+  orientCheck();
+}
+el.side.hidden = !touchMode;
+orientCheck();
+el.side.addEventListener('click', e => {
+  e.stopPropagation();
+  stickSide = stickSide === 'left' ? 'right' : 'left';
+  try { localStorage.setItem('chaser.side', stickSide); } catch(err){}
+});
 addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
@@ -207,12 +299,28 @@ addEventListener('keydown', e => {
 addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
 function ptFrom(e){ const r = cv.getBoundingClientRect(); return { x:e.clientX - r.left, y:e.clientY - r.top }; }
 cv.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'touch') setTouchMode(true);
   if (state !== ST.PLAY){ safeReset(); return; }
+  const p = ptFrom(e);
+  if (touchMode){
+    if (stick.id !== null) return;
+    const c = stickPos();
+    if (Math.hypot(p.x - c.x, p.y - c.y) > stickR() * 2.2) return;
+    stick.id = e.pointerId; stick.active = true; stickSet(p);
+  } else {
+    pointer = p;
+  }
   try { cv.setPointerCapture(e.pointerId); } catch(err){}
-  pointer = ptFrom(e);
 });
-cv.addEventListener('pointermove', e => { if (pointer) pointer = ptFrom(e); });
-const drop = () => { pointer = null; };
+cv.addEventListener('pointermove', e => {
+  if (stick.id === e.pointerId){ stickSet(ptFrom(e)); return; }
+  if (!touchMode && pointer) pointer = ptFrom(e);
+});
+addEventListener('orientationchange', () => setTimeout(resize, 120));
+const drop = e => {
+  if (e && stick.id === e.pointerId){ stick.id = null; stick.active = false; stick.mag = 0; }
+  pointer = null;
+};
 cv.addEventListener('pointerup', drop);
 cv.addEventListener('pointercancel', drop);
 let guard = 0;
@@ -220,6 +328,7 @@ function safeReset(){
   const now = Date.now();
   if (now - guard < 350) return;
   guard = now;
+  goLandscape();
   try { reset(); }
   catch(err){
     el.verdict.textContent = '起動エラー';
@@ -227,6 +336,11 @@ function safeReset(){
     el.over.hidden = false;
   }
 }
+el.btnResume.addEventListener('click', e => {
+  e.stopPropagation();
+  paused = false; el.rotate.hidden = true;
+  last = performance.now();
+});
 function arm(node){
   if (!node) return;
   node.addEventListener('click', e => { e.preventDefault(); safeReset(); });
@@ -310,9 +424,10 @@ function reset(){
   player = { x:W/2, y:H/2, vx:0, vy:0, r:11*S, trail:[] };
   for (let i = 0; i < 3; i++) addWall();
   for (let i = 0; i < 2; i++) spawn(0.4);
-  state = ST.PLAY;
+  state = ST.PLAY; paused = false;
   el.start.hidden = true; el.over.hidden = true;
   last = performance.now();
+  orientCheck();
 }
 function spawn(delay){
   const m = 26 * S;
@@ -357,7 +472,7 @@ function frame(now){
   const dt = Math.min((now - last) / 1000, 0.05);
   last = now;
   try {
-    if (state === ST.PLAY) step(dt);
+    if (state === ST.PLAY && !paused) step(dt);
     else { flash = Math.max(0, flash - dt*2); shake = Math.max(0, shake - dt*30); stepFx(dt); }
     draw();
   } catch(err){
@@ -393,7 +508,10 @@ function step(dt){
   if (dx || dy){
     const m = Math.hypot(dx, dy);
     player.vx = dx/m*sp; player.vy = dy/m*sp;
-  } else if (pointer){
+  } else if (stick.active && stick.mag > 0.12){
+    const k = Math.min(stick.mag / 0.85, 1);   // 外周手前で最大速度
+    player.vx = stick.dx * sp * k; player.vy = stick.dy * sp * k;
+  } else if (!touchMode && pointer){
     const ax = pointer.x - player.x, ay = pointer.y - player.y, d = Math.hypot(ax, ay);
     if (d > 2){ const k = Math.min(d / (26*S), 1); player.vx = ax/d*sp*k; player.vy = ay/d*sp*k; }
     else { player.vx = player.vy = 0; }
@@ -689,6 +807,26 @@ function draw(){
       ctx.fillStyle = 'rgba(' + (m.col || '238,243,251') + ',' + Math.max(m.a, 0) + ')';
       ctx.beginPath(); ctx.arc(m.x, m.y, m.r, 0, 7); ctx.fill();
     }
+  }
+
+  /* 仮想スティック */
+  if (touchMode && state === ST.PLAY){
+    const c = stickPos(), R = stickR();
+    ctx.fillStyle = 'rgba(238,243,251,' + (stick.active ? .07 : .045) + ')';
+    ctx.beginPath(); ctx.arc(c.x, c.y, R, 0, 7); ctx.fill();
+    ctx.strokeStyle = 'rgba(238,243,251,' + (stick.active ? .3 : .16) + ')';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(c.x, c.y, R, 0, 7); ctx.stroke();
+    ctx.strokeStyle = 'rgba(238,243,251,.10)';
+    ctx.beginPath(); ctx.moveTo(c.x - R*.3, c.y); ctx.lineTo(c.x + R*.3, c.y);
+    ctx.moveTo(c.x, c.y - R*.3); ctx.lineTo(c.x, c.y + R*.3); ctx.stroke();
+    const kx = c.x + stick.dx * stick.mag * R, ky = c.y + stick.dy * stick.mag * R;
+    const kr = R * 0.36;
+    ctx.fillStyle = 'rgba(' + (buff.boost > 0 ? KIND.boost.col : '238,243,251') + ',' + (stick.active ? .5 : .28) + ')';
+    ctx.beginPath(); ctx.arc(stick.active ? kx : c.x, stick.active ? ky : c.y, kr, 0, 7); ctx.fill();
+    ctx.strokeStyle = 'rgba(238,243,251,' + (stick.active ? .8 : .4) + ')';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(stick.active ? kx : c.x, stick.active ? ky : c.y, kr, 0, 7); ctx.stroke();
   }
 
   if (flash > 0 && state === ST.PLAY){
