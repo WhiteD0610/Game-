@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>チェイサー</title>
+<style>
+  :root{
+    --ai:#0d1730; --ai-deep:#070d1c; --ai-line:#1c2c50;
+    --haku:#eef3fb; --shu:#e2503f; --kin:#e8b04b; --mist:#7f92b8;
+    box-sizing:border-box;
+    padding-top:env(safe-area-inset-top,0px);
+    padding-bottom:env(safe-area-inset-bottom,0px);
+  }
+  *,*::before,*::after{box-sizing:inherit}
+  html,body{height:100%;margin:0}
+  body{
+    background:var(--ai-deep);color:var(--haku);
+    font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",system-ui,-apple-system,"Segoe UI",sans-serif;
+    overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none;
+    -webkit-tap-highlight-color:transparent;
+  }
+  #stage{position:relative;width:100%;height:100%;overflow:hidden}
+  canvas{display:block;width:100%;height:100%;background:var(--ai)}
+
+  #hud{
+    position:absolute;inset:0;pointer-events:none;
+    padding:calc(env(safe-area-inset-top,0px) + 14px) 18px 0;
+    display:flex;justify-content:space-between;align-items:flex-start;
+    font-variant-numeric:tabular-nums;
+  }
+  #time{font-size:clamp(34px,9vw,58px);font-weight:300;line-height:1;letter-spacing:-.02em;text-shadow:0 2px 24px rgba(0,0,0,.5)}
+  #time small{font-size:.38em;font-weight:400;color:var(--mist);margin-left:.25em;letter-spacing:0}
+  #right{text-align:right;line-height:1.5;font-size:13px;color:var(--mist)}
+  #right b{display:block;font-size:20px;font-weight:500;color:var(--kin);letter-spacing:.02em}
+  #buff{margin-top:6px;font-size:13px;line-height:1.5}
+  #buff div{font-weight:500}
+
+  .sheet{
+    position:absolute;inset:0;display:grid;place-content:center;justify-items:center;
+    gap:18px;padding:32px;text-align:center;
+    background:radial-gradient(120% 90% at 50% 40%,rgba(7,13,28,.72),rgba(7,13,28,.94));
+    backdrop-filter:blur(2px);
+  }
+  .sheet[hidden]{display:none}
+  .sheet h1{margin:0;font-size:clamp(38px,12vw,76px);font-weight:200;letter-spacing:.32em;text-indent:.32em;line-height:1}
+  .sheet p{margin:0;max-width:32ch;color:var(--mist);font-size:15px;line-height:1.8}
+  .sheet .score{font-size:clamp(46px,14vw,86px);font-weight:300;line-height:1;font-variant-numeric:tabular-nums}
+  .sheet .score span{font-size:.34em;color:var(--mist);margin-left:.2em}
+  .rule{width:64px;height:1px;background:var(--shu)}
+  .legend{display:grid;gap:8px;font-size:13.5px;color:var(--mist);text-align:left}
+  .legend div{display:flex;align-items:center;gap:10px}
+  .legend{max-height:46vh;overflow:auto}
+  .legend i{width:11px;height:11px;border-radius:3px;transform:rotate(45deg);flex:none}
+  button{
+    font:inherit;font-size:16px;letter-spacing:.08em;color:var(--ai-deep);background:var(--haku);
+    border:0;border-radius:999px;padding:14px 38px;cursor:pointer;
+    transition:transform .12s ease,background .12s ease;
+  }
+  button:hover{background:#fff;transform:translateY(-1px)}
+  button:focus-visible{outline:2px solid var(--kin);outline-offset:3px}
+  .keys{font-size:13px;color:var(--mist)}
+  .keys kbd{display:inline-block;padding:2px 7px;margin:0 1px;border:1px solid var(--ai-line);border-radius:5px;background:rgba(255,255,255,.04);font:inherit;font-size:12px}
+  @media (prefers-reduced-motion:reduce){button{transition:none}}
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="cv"></canvas>
+
+  <div id="hud" aria-hidden="true">
+    <div id="time">0.0<small>秒</small></div>
+    <div id="right">
+      <b id="lv">Lv 1</b>
+      <span id="cnt">追跡者 0</span><br>
+      <span id="best">最高 0.0 秒</span>
+      <div id="buff"></div>
+    </div>
+  </div>
+
+  <div class="sheet" id="start">
+    <h1>逃</h1>
+    <div class="rule"></div>
+    <p>追跡者から逃げ続ける。時間が経つほど数が増え、速くなり、種類も増える。壁は盾にも罠にもなる。</p>
+    <div class="legend">
+      <div><i style="background:#e2503f;border-radius:50%;transform:none"></i>追尾 ── まっすぐ迫る</div>
+      <div><i style="background:#e8b04b;border-radius:50%;transform:none"></i>先読み ── 進む先へ回り込む（Lv3〜）</div>
+      <div><i style="background:#8fa3c8;transform:none;border-radius:2px"></i>漂流 ── 気まぐれに彷徨う（Lv2〜）</div>
+      <div><i style="background:#ff8fb0"></i>反跳 ── 直進し壁で跳ね返る（Lv4〜）</div>
+      <div><i style="background:#ff7a3a;border-radius:50%;transform:none"></i>突進 ── 狙いを定めて一直線（Lv6〜）</div>
+      <div><i style="background:#5fd6ff"></i>加速 ── 4.5秒間、さらに1.45倍まで加速</div>
+      <div><i style="background:#b98cff"></i>停滞 ── 4秒間、追跡者が鈍る</div>
+      <div><i style="background:#7ee0a8"></i>衝撃 ── 周囲を吹き飛ばし、最寄りの1体を消す</div>
+    </div>
+    <button id="btnStart">はじめる</button>
+    <div class="keys">画面のどこでも押せば開始 ／ PCは <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>・矢印キー、スマホは画面をなぞる</div>
+  </div>
+
+  <div class="sheet" id="over" hidden>
+    <p id="verdict">捕まった</p>
+    <div class="score"><span id="finalT">0.0</span><span>秒</span></div>
+    <div class="rule"></div>
+    <p id="detail">Lv 1 ／ 追跡者 0</p>
+    <button id="btnRetry">もう一度</button>
+    <div class="keys"><kbd>R</kbd> でも再開</div>
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const el = {
+  time: document.getElementById('time'), lv: document.getElementById('lv'),
+  cnt: document.getElementById('cnt'), best: document.getElementById('best'),
+  buff: document.getElementById('buff'),
+  start: document.getElementById('start'), over: document.getElementById('over'),
+  finalT: document.getElementById('finalT'), detail: document.getElementById('detail'),
+  verdict: document.getElementById('verdict'),
+};
+
+let W = 0, H = 0, S = 1;
+function resize(){
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const r = cv.getBoundingClientRect();
+  W = Math.max(320, r.width); H = Math.max(320, r.height);
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  S = Math.min(Math.max(Math.min(W, H) / 640, 0.62), 1.55);
+}
+if (typeof ResizeObserver !== 'undefined') { try { new ResizeObserver(resize).observe(cv); } catch(e){} }
+addEventListener('resize', resize);
+addEventListener('orientationchange', resize);
+resize();
+
+const ST = { READY:0, PLAY:1, OVER:2 };
+let state = ST.READY;
+let t = 0, level = 1, shake = 0, flash = 0, itemTimer = 0;
+let player = null, foes = [], walls = [], items = [], motes = [], rings = [], best = 0;
+const buff = { boost:0, slow:0 };
+
+const FOE = {
+  chase: { col:'226,80,63',  name:'追尾' },
+  smart: { col:'232,176,75', name:'先読み' },
+  drift: { col:'143,163,200',name:'漂流' },
+  bound: { col:'255,143,176',name:'反跳' },
+  dash:  { col:'255,122,58', name:'突進' },
+};
+function pickKind(lv){
+  const w = [['chase', 10]];
+  if (lv >= 2) w.push(['drift', 6]);
+  if (lv >= 3) w.push(['smart', Math.min(3 + lv, 12)]);
+  if (lv >= 4) w.push(['bound', Math.min(2 + lv * 0.8, 8)]);
+  if (lv >= 6) w.push(['dash',  Math.min(1 + lv * 0.6, 6)]);
+  let r = Math.random() * w.reduce((a, b) => a + b[1], 0);
+  for (const [k, v] of w){ if ((r -= v) <= 0) return k; }
+  return 'chase';
+}
+/* 壁と縁で反射する（漂流・反跳・突進用） */
+function bounce(o){
+  if (o.x < o.r){ o.x = o.r; o.vx = Math.abs(o.vx); }
+  if (o.x > W - o.r){ o.x = W - o.r; o.vx = -Math.abs(o.vx); }
+  if (o.y < o.r){ o.y = o.r; o.vy = Math.abs(o.vy); }
+  if (o.y > H - o.r){ o.y = H - o.r; o.vy = -Math.abs(o.vy); }
+  for (const w of walls){
+    const cx = Math.min(Math.max(o.x, w.x), w.x + w.w);
+    const cy = Math.min(Math.max(o.y, w.y), w.y + w.h);
+    let dx = o.x - cx, dy = o.y - cy, d = Math.hypot(dx, dy);
+    if (d === 0){
+      const l = o.x - w.x, rg = w.x + w.w - o.x, u = o.y - w.y, dn = w.y + w.h - o.y;
+      const mn = Math.min(l, rg, u, dn);
+      if (mn === l){ o.x = w.x - o.r; o.vx = -Math.abs(o.vx); }
+      else if (mn === rg){ o.x = w.x + w.w + o.r; o.vx = Math.abs(o.vx); }
+      else if (mn === u){ o.y = w.y - o.r; o.vy = -Math.abs(o.vy); }
+      else { o.y = w.y + w.h + o.r; o.vy = Math.abs(o.vy); }
+      continue;
+    }
+    if (d < o.r){
+      const nx = dx/d, ny = dy/d, k = (o.r - d);
+      o.x += nx*k; o.y += ny*k;
+      const dot = o.vx*nx + o.vy*ny;
+      if (dot < 0){ o.vx -= 2*dot*nx; o.vy -= 2*dot*ny; }
+    }
+  }
+}
+
+const KIND = {
+  boost: { col:'95,214,255', name:'加速' },
+  slow:  { col:'185,140,255', name:'停滞' },
+  blast: { col:'126,224,168', name:'衝撃' },
+};
+
+try { best = parseFloat(localStorage.getItem('chaser.best') || '0') || 0; } catch(e){}
+el.best.textContent = '最高 ' + best.toFixed(1) + ' 秒';
+
+/* ---------- 入力 ---------- */
+const keys = new Set();
+let pointer = null;
+addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
+  keys.add(k);
+  if (k === 'r' && state === ST.OVER) safeReset();
+  if ((k === ' ' || k === 'enter') && state !== ST.PLAY) safeReset();
+});
+addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+function ptFrom(e){ const r = cv.getBoundingClientRect(); return { x:e.clientX - r.left, y:e.clientY - r.top }; }
+cv.addEventListener('pointerdown', e => {
+  if (state !== ST.PLAY){ safeReset(); return; }
+  try { cv.setPointerCapture(e.pointerId); } catch(err){}
+  pointer = ptFrom(e);
+});
+cv.addEventListener('pointermove', e => { if (pointer) pointer = ptFrom(e); });
+const drop = () => { pointer = null; };
+cv.addEventListener('pointerup', drop);
+cv.addEventListener('pointercancel', drop);
+let guard = 0;
+function safeReset(){
+  const now = Date.now();
+  if (now - guard < 350) return;
+  guard = now;
+  try { reset(); }
+  catch(err){
+    el.verdict.textContent = '起動エラー';
+    el.detail.textContent = String(err && err.message || err);
+    el.over.hidden = false;
+  }
+}
+function arm(node){
+  if (!node) return;
+  node.addEventListener('click', e => { e.preventDefault(); safeReset(); });
+  node.addEventListener('pointerup', e => { e.preventDefault(); safeReset(); });
+  node.addEventListener('touchend', e => { e.preventDefault(); safeReset(); }, {passive:false});
+}
+arm(document.getElementById('btnStart'));
+arm(document.getElementById('btnRetry'));
+arm(el.start);
+arm(el.over);
+
+/* ---------- 難易度 ---------- */
+const PSPD = () => 424 * S * (buff.boost > 0 ? 1.45 : 1);
+const lvOf = s => 1 + Math.floor(s / 12);
+const foeCount = s => Math.min(2 + Math.floor(s / 8.5), 18);
+const foeSpeed = lv => Math.min(177 + lv * 19, 398) * S * (buff.slow > 0 ? 0.45 : 1);
+const foeTurn  = lv => (3.6 + Math.min(lv * 0.6, 8.2)) * (buff.slow > 0 ? 0.55 : 1);
+const foeLead  = lv => Math.min(0.06 * lv, 0.72);
+
+/* ---------- 壁 ---------- */
+function rectsOverlap(a, b, m){
+  return a.x - m < b.x + b.w && a.x + a.w + m > b.x && a.y - m < b.y + b.h && a.y + a.h + m > b.y;
+}
+function addWall(){
+  if (walls.length >= 9) return;
+  const m = 30 * S;
+  for (let i = 0; i < 40; i++){
+    const long = (70 + Math.random() * 190) * S;
+    const thin = (16 + Math.random() * 12) * S;
+    const horiz = Math.random() < 0.5;
+    const w = horiz ? long : thin, h = horiz ? thin : long;
+    if (w > W - m*4 || h > H - m*4) continue;
+    const r = { x: m + Math.random() * (W - w - m*2), y: m + Math.random() * (H - h - m*2), w, h, a:0 };
+    if (walls.some(o => rectsOverlap(r, o, 42 * S))) continue;
+    const cx = r.x + w/2, cy = r.y + h/2;
+    if (player && Math.hypot(cx - player.x, cy - player.y) < 150 * S) continue;
+    walls.push(r);
+    return r;
+  }
+}
+/* 円と矩形の押し出し（滑りながら止まる） */
+function resolve(o, r){
+  for (const w of walls){
+    const cx = Math.min(Math.max(o.x, w.x), w.x + w.w);
+    const cy = Math.min(Math.max(o.y, w.y), w.y + w.h);
+    let dx = o.x - cx, dy = o.y - cy, d = Math.hypot(dx, dy);
+    if (d === 0){ // 完全に内側：最短の辺へ逃がす
+      const l = o.x - w.x, rg = w.x + w.w - o.x, u = o.y - w.y, dn = w.y + w.h - o.y;
+      const mn = Math.min(l, rg, u, dn);
+      if (mn === l) o.x = w.x - r; else if (mn === rg) o.x = w.x + w.w + r;
+      else if (mn === u) o.y = w.y - r; else o.y = w.y + w.h + r;
+      continue;
+    }
+    if (d < r){
+      const k = (r - d) / d;
+      o.x += dx * k; o.y += dy * k;
+      if (Math.abs(dx) > Math.abs(dy)) o.vx = 0; else o.vy = 0;
+    }
+  }
+}
+/* 壁からの反発（追跡者の回り込み用） */
+function wallPush(x, y, range){
+  let ax = 0, ay = 0;
+  for (const w of walls){
+    const cx = Math.min(Math.max(x, w.x), w.x + w.w);
+    const cy = Math.min(Math.max(y, w.y), w.y + w.h);
+    const dx = x - cx, dy = y - cy, d = Math.hypot(dx, dy);
+    if (d > 0 && d < range){ const k = (1 - d / range) * 1.5; ax += dx/d*k; ay += dy/d*k; }
+  }
+  return [ax, ay];
+}
+function inWall(x, y, pad){
+  return walls.some(w => x > w.x - pad && x < w.x + w.w + pad && y > w.y - pad && y < w.y + w.h + pad);
+}
+
+/* ---------- 生成 ---------- */
+function reset(){
+  t = 0; level = 1; shake = 0; flash = 0; itemTimer = 5;
+  buff.boost = 0; buff.slow = 0;
+  walls = []; items = []; foes = []; motes = []; rings = [];
+  player = { x:W/2, y:H/2, vx:0, vy:0, r:11*S, trail:[] };
+  for (let i = 0; i < 3; i++) addWall();
+  for (let i = 0; i < 2; i++) spawn(0.4);
+  state = ST.PLAY;
+  el.start.hidden = true; el.over.hidden = true;
+  last = performance.now();
+}
+function spawn(delay){
+  const m = 26 * S;
+  let x, y;
+  for (let i = 0; i < 30; i++){
+    const side = Math.floor(Math.random() * 4);
+    if (side === 0){ x = Math.random()*W; y = m; }
+    else if (side === 1){ x = W - m; y = Math.random()*H; }
+    else if (side === 2){ x = Math.random()*W; y = H - m; }
+    else { x = m; y = Math.random()*H; }
+    if (!inWall(x, y, 14*S) && Math.hypot(x - player.x, y - player.y) > Math.min(W,H) * 0.42) break;
+  }
+  const kind = pickKind(level);
+  const f = { x, y, vx:0, vy:0, r:10*S, wake:delay, kind, trail:[], ang:0, ph:'rest', pt:0.5 };
+  if (kind === 'smart') f.r = 10*S;
+  if (kind === 'drift') f.r = 12*S;
+  if (kind === 'bound') f.r = 8.5*S;
+  if (kind === 'dash')  f.r = 11.5*S;
+  if (kind === 'drift' || kind === 'bound'){
+    f.ang = Math.atan2(H/2 - y, W/2 - x) + (Math.random() - 0.5) * 1.3;
+    f.vx = Math.cos(f.ang); f.vy = Math.sin(f.ang);
+  }
+  foes.push(f);
+}
+function dropItem(){
+  if (items.length >= 3) return;
+  const pool = ['boost','boost','slow','blast'];
+  const kind = pool[Math.floor(Math.random() * pool.length)];
+  const m = 46 * S;
+  for (let i = 0; i < 40; i++){
+    const x = m + Math.random() * (W - m*2), y = m + Math.random() * (H - m*2);
+    if (inWall(x, y, 20*S)) continue;
+    if (Math.hypot(x - player.x, y - player.y) < 90 * S) continue;
+    items.push({ x, y, kind, r:11*S, life:15, spin:Math.random()*6 });
+    return;
+  }
+}
+
+/* ---------- ループ ---------- */
+let last = performance.now();
+function frame(now){
+  const dt = Math.min((now - last) / 1000, 0.05);
+  last = now;
+  try {
+    if (state === ST.PLAY) step(dt);
+    else { flash = Math.max(0, flash - dt*2); shake = Math.max(0, shake - dt*30); stepFx(dt); }
+    draw();
+  } catch(err){
+    if (!frame.warned){ frame.warned = true; console.error(err); }
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+function stepFx(dt){
+  for (const m of motes){ m.x += m.vx*dt; m.y += m.vy*dt; m.a -= dt*1.4; m.vx *= 0.96; m.vy *= 0.96; }
+  for (let i = motes.length - 1; i >= 0; i--) if (motes[i].a <= 0) motes.splice(i, 1);
+  for (const r of rings){ r.t += dt; }
+  for (let i = rings.length - 1; i >= 0; i--) if (rings[i].t > 0.6) rings.splice(i, 1);
+}
+
+function step(dt){
+  t += dt;
+  const nl = lvOf(t);
+  if (nl > level){ level = nl; flash = 1; if (level % 2 === 0) addWall(); }
+  for (const w of walls) w.a = Math.min(1, w.a + dt * 2);
+
+  buff.boost = Math.max(0, buff.boost - dt);
+  buff.slow  = Math.max(0, buff.slow  - dt);
+
+  /* 自機 */
+  let dx = 0, dy = 0;
+  if (keys.has('arrowleft') || keys.has('a')) dx -= 1;
+  if (keys.has('arrowright')|| keys.has('d')) dx += 1;
+  if (keys.has('arrowup')   || keys.has('w')) dy -= 1;
+  if (keys.has('arrowdown') || keys.has('s')) dy += 1;
+  const sp = PSPD();
+  if (dx || dy){
+    const m = Math.hypot(dx, dy);
+    player.vx = dx/m*sp; player.vy = dy/m*sp;
+  } else if (pointer){
+    const ax = pointer.x - player.x, ay = pointer.y - player.y, d = Math.hypot(ax, ay);
+    if (d > 2){ const k = Math.min(d / (26*S), 1); player.vx = ax/d*sp*k; player.vy = ay/d*sp*k; }
+    else { player.vx = player.vy = 0; }
+  } else { player.vx *= 0.82; player.vy *= 0.82; }
+  player.x = Math.min(Math.max(player.x + player.vx*dt, player.r), W - player.r);
+  player.y = Math.min(Math.max(player.y + player.vy*dt, player.r), H - player.r);
+  resolve(player, player.r);
+  player.trail.push({x:player.x, y:player.y, a:1});
+
+  /* アイテム */
+  itemTimer -= dt;
+  if (itemTimer <= 0){ dropItem(); itemTimer = 7 + Math.random() * 4; }
+  for (let i = items.length - 1; i >= 0; i--){
+    const it = items[i];
+    it.life -= dt; it.spin += dt * 1.6;
+    if (it.life <= 0){ items.splice(i, 1); continue; }
+    if (Math.hypot(it.x - player.x, it.y - player.y) < it.r + player.r + 4*S){
+      take(it); items.splice(i, 1);
+    }
+  }
+
+  /* 追加投入 */
+  if (foes.length < foeCount(t) && Math.random() < dt * 1.6) spawn(1.0);
+
+  /* 追跡者 */
+  const spd = foeSpeed(level), turn = foeTurn(level), lead = foeLead(level);
+  for (const f of foes){
+    if (f.wake > 0){ f.wake -= dt; continue; }
+
+    if (f.kind === 'chase' || f.kind === 'smart'){
+      const sm = f.kind === 'smart';
+      const tx = player.x + (sm ? player.vx * lead : 0);
+      const ty = player.y + (sm ? player.vy * lead : 0);
+      let ax = tx - f.x, ay = ty - f.y;
+      const d = Math.hypot(ax, ay) || 1;
+      ax /= d; ay /= d;
+      for (const g of foes){
+        if (g === f || g.wake > 0 || (g.kind !== 'chase' && g.kind !== 'smart')) continue;
+        const sx = f.x - g.x, sy = f.y - g.y, sd = Math.hypot(sx, sy);
+        if (sd > 0 && sd < f.r * 3.4){ ax += sx/sd * 0.55; ay += sy/sd * 0.55; }
+      }
+      const [wx, wy] = wallPush(f.x, f.y, 46 * S);
+      ax += wx; ay += wy;
+      const an = Math.hypot(ax, ay) || 1;
+      const k = Math.min(turn * dt, 1);
+      f.vx += (ax/an*spd - f.vx) * k; f.vy += (ay/an*spd - f.vy) * k;
+      f.x += f.vx*dt; f.y += f.vy*dt;
+      f.x = Math.min(Math.max(f.x, f.r), W - f.r);
+      f.y = Math.min(Math.max(f.y, f.r), H - f.r);
+      resolve(f, f.r);
+
+    } else if (f.kind === 'drift'){
+      f.ang = Math.atan2(f.vy, f.vx) + (Math.random() - 0.5) * 3.0 * dt;
+      const v = spd * 0.66;
+      f.vx = Math.cos(f.ang) * v; f.vy = Math.sin(f.ang) * v;
+      f.x += f.vx*dt; f.y += f.vy*dt;
+      bounce(f);
+
+    } else if (f.kind === 'bound'){
+      const v = spd * 1.15, m = Math.hypot(f.vx, f.vy) || 1;
+      f.vx = f.vx/m*v; f.vy = f.vy/m*v;
+      f.x += f.vx*dt; f.y += f.vy*dt;
+      bounce(f);
+
+    } else { /* dash：溜め → 直進突進 → 休止 */
+      f.pt -= dt;
+      if (f.ph === 'rest'){
+        f.vx *= 0.86; f.vy *= 0.86;
+        f.x += f.vx*dt; f.y += f.vy*dt;
+        if (f.pt <= 0){ f.ph = 'charge'; f.pt = 0.85; }
+      } else if (f.ph === 'charge'){
+        f.vx *= 0.8; f.vy *= 0.8;
+        if (f.pt > 0.3) f.ang = Math.atan2(player.y - f.y, player.x - f.x);
+        if (f.pt <= 0){
+          f.ph = 'dash'; f.pt = 0.62;
+          const v = spd * 2.4;
+          f.vx = Math.cos(f.ang) * v; f.vy = Math.sin(f.ang) * v;
+        }
+      } else {
+        f.x += f.vx*dt; f.y += f.vy*dt;
+        bounce(f);
+        if (f.pt <= 0){ f.ph = 'rest'; f.pt = 0.5 + Math.random() * 0.4; }
+      }
+      resolve(f, f.r);
+    }
+
+    f.trail.push({x:f.x, y:f.y});
+    if (f.trail.length > 9) f.trail.shift();
+    if (t > 1.2 && Math.hypot(f.x - player.x, f.y - player.y) < f.r + player.r) die();
+  }
+
+  for (const p of player.trail) p.a -= dt * (buff.boost > 0 ? 1.5 : 2.4);
+  while (player.trail.length && player.trail[0].a <= 0) player.trail.shift();
+  stepFx(dt);
+
+  flash = Math.max(0, flash - dt*1.6);
+  shake = Math.max(0, shake - dt*30);
+
+  el.time.innerHTML = t.toFixed(1) + '<small>秒</small>';
+  el.lv.textContent = 'Lv ' + level;
+  el.cnt.textContent = '追跡者 ' + foes.length;
+  let b = '';
+  if (buff.boost > 0) b += '<div style="color:rgb(' + KIND.boost.col + ')">加速 ' + buff.boost.toFixed(1) + '</div>';
+  if (buff.slow  > 0) b += '<div style="color:rgb(' + KIND.slow.col  + ')">停滞 ' + buff.slow.toFixed(1)  + '</div>';
+  el.buff.innerHTML = b;
+}
+
+function take(it){
+  rings.push({ x:it.x, y:it.y, t:0, col:KIND[it.kind].col });
+  for (let i = 0; i < 12; i++){
+    const a = Math.random()*6.28, v = (40 + Math.random()*140) * S;
+    motes.push({ x:it.x, y:it.y, vx:Math.cos(a)*v, vy:Math.sin(a)*v, a:1, r:2*S, col:KIND[it.kind].col });
+  }
+  if (it.kind === 'boost') buff.boost = 4.5;
+  else if (it.kind === 'slow') buff.slow = 4;
+  else {
+    const R = 210 * S;
+    let near = null, nd = Infinity;
+    for (const f of foes){
+      const d = Math.hypot(f.x - player.x, f.y - player.y);
+      if (d < nd){ nd = d; near = f; }
+      if (d < R && d > 0){
+        const k = (1 - d / R) * 460 * S;
+        f.vx = (f.x - player.x)/d * k; f.vy = (f.y - player.y)/d * k;
+        if (f.kind === 'dash'){ f.ph = 'rest'; f.pt = 0.9; }
+        if (f.kind !== 'bound' && f.kind !== 'drift') f.wake = 0.45;
+      }
+    }
+    if (near) foes.splice(foes.indexOf(near), 1);
+    shake = 9;
+    rings.push({ x:player.x, y:player.y, t:0, col:KIND.blast.col, big:true });
+  }
+}
+
+function die(){
+  state = ST.OVER; shake = 16; flash = 1;
+  for (let i = 0; i < 26; i++){
+    const a = Math.random() * 6.28, v = (60 + Math.random()*220) * S;
+    motes.push({ x:player.x, y:player.y, vx:Math.cos(a)*v, vy:Math.sin(a)*v, a:1, r:(1.5+Math.random()*2.5)*S });
+  }
+  if (t > best){
+    best = t;
+    try { localStorage.setItem('chaser.best', String(best)); } catch(e){}
+    el.verdict.textContent = '自己最高記録';
+  } else el.verdict.textContent = '捕まった';
+  el.best.textContent = '最高 ' + best.toFixed(1) + ' 秒';
+  el.finalT.textContent = t.toFixed(1);
+  el.detail.textContent = 'Lv ' + level + ' ／ 追跡者 ' + foes.length + ' ／ 壁 ' + walls.length;
+  el.over.hidden = false;
+}
+
+/* ---------- 描画 ---------- */
+function draw(){
+  ctx.save();
+  if (shake > 0.2) ctx.translate((Math.random()-.5)*shake, (Math.random()-.5)*shake);
+
+  ctx.fillStyle = '#0d1730';
+  ctx.fillRect(-30, -30, W+60, H+60);
+
+  const g = Math.max(120 - level * 5, 52) * S;
+  ctx.strokeStyle = 'rgba(120,150,210,.075)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = (W % g) / 2; x < W; x += g){ ctx.moveTo(x, 0); ctx.lineTo(x, H); }
+  for (let y = (H % g) / 2; y < H; y += g){ ctx.moveTo(0, y); ctx.lineTo(W, y); }
+  ctx.stroke();
+
+  const heat = Math.min(level / 14, 1);
+  const vg = ctx.createRadialGradient(W/2, H/2, Math.min(W,H)*0.28, W/2, H/2, Math.max(W,H)*0.78);
+  vg.addColorStop(0, 'rgba(226,80,63,0)');
+  vg.addColorStop(1, 'rgba(226,80,63,' + (0.05 + heat*0.26) + ')');
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+
+  if (state !== ST.READY){
+    /* 壁 */
+    for (const w of walls){
+      ctx.globalAlpha = w.a;
+      ctx.fillStyle = '#1a2949';
+      ctx.fillRect(w.x, w.y, w.w, w.h);
+      ctx.fillStyle = 'rgba(127,146,184,.34)';
+      ctx.fillRect(w.x, w.y, w.w, Math.max(2, 2*S));
+      ctx.strokeStyle = 'rgba(7,13,28,.6)'; ctx.lineWidth = 1;
+      ctx.strokeRect(w.x + .5, w.y + .5, w.w - 1, w.h - 1);
+      ctx.globalAlpha = 1;
+    }
+
+    /* アイテム */
+    for (const it of items){
+      const col = KIND[it.kind].col;
+      const fade = it.life < 3.5 ? (0.35 + 0.65 * Math.abs(Math.sin(it.life * 7))) : 1;
+      const pulse = 1 + Math.sin(it.spin * 2) * 0.08;
+      ctx.save();
+      ctx.translate(it.x, it.y); ctx.rotate(it.spin);
+      ctx.globalAlpha = fade;
+      ctx.fillStyle = 'rgba(' + col + ',.16)';
+      ctx.beginPath(); ctx.arc(0, 0, it.r * 2.2 * pulse, 0, 7); ctx.fill();
+      ctx.fillStyle = 'rgb(' + col + ')';
+      const s = it.r * pulse;
+      ctx.beginPath(); ctx.moveTo(0,-s); ctx.lineTo(s,0); ctx.lineTo(0,s); ctx.lineTo(-s,0); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = 'rgba(238,243,251,.9)'; ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(0,-s*.45); ctx.lineTo(s*.45,0); ctx.lineTo(0,s*.45); ctx.lineTo(-s*.45,0); ctx.closePath(); ctx.stroke();
+      ctx.restore();
+      ctx.globalAlpha = 1;
+    }
+
+    /* 自機の残光 */
+    ctx.lineCap = 'round';
+    const tc = buff.boost > 0 ? KIND.boost.col : '238,243,251';
+    for (let i = 1; i < player.trail.length; i++){
+      const a = player.trail[i].a;
+      if (a <= 0) continue;
+      ctx.strokeStyle = 'rgba(' + tc + ',' + a*0.3 + ')';
+      ctx.lineWidth = player.r * 1.5 * a;
+      ctx.beginPath();
+      ctx.moveTo(player.trail[i-1].x, player.trail[i-1].y);
+      ctx.lineTo(player.trail[i].x, player.trail[i].y);
+      ctx.stroke();
+    }
+
+    /* 追跡者 */
+    for (const f of foes){
+      if (f.wake > 0 && f.trail.length === 0){
+        ctx.strokeStyle = 'rgba(' + FOE[f.kind].col + ',' + (0.25 + 0.5*Math.abs(Math.sin(f.wake*10))) + ')';
+        ctx.lineWidth = 1.5; ctx.setLineDash([5, 6]);
+        ctx.beginPath(); ctx.arc(f.x, f.y, f.r + 22*S*Math.max(f.wake,0), 0, 7); ctx.stroke();
+        ctx.setLineDash([]);
+        continue;
+      }
+      const col = buff.slow > 0 ? '150,150,190' : FOE[f.kind].col;
+      for (let i = 1; i < f.trail.length; i++){
+        const a = i / f.trail.length;
+        ctx.strokeStyle = 'rgba(' + col + ',' + a*0.32 + ')';
+        ctx.lineWidth = f.r * 1.4 * a;
+        ctx.beginPath();
+        ctx.moveTo(f.trail[i-1].x, f.trail[i-1].y);
+        ctx.lineTo(f.trail[i].x, f.trail[i].y);
+        ctx.stroke();
+      }
+      /* 突進の溜め：狙い線 */
+      if (f.kind === 'dash' && f.ph === 'charge'){
+        const L = Math.max(W, H);
+        ctx.strokeStyle = 'rgba(' + col + ',' + (0.22 + 0.4 * (1 - f.pt / 0.85)) + ')';
+        ctx.lineWidth = 1.4; ctx.setLineDash([9, 7]);
+        ctx.beginPath(); ctx.moveTo(f.x, f.y);
+        ctx.lineTo(f.x + Math.cos(f.ang) * L, f.y + Math.sin(f.ang) * L);
+        ctx.stroke(); ctx.setLineDash([]);
+      }
+      ctx.fillStyle = 'rgba(' + col + ',.16)';
+      ctx.beginPath(); ctx.arc(f.x, f.y, f.r * 2.1, 0, 7); ctx.fill();
+      ctx.fillStyle = 'rgb(' + col + ')';
+      if (f.kind === 'drift'){
+        ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(f.ang * 0.6);
+        const a = f.r * 0.88;
+        ctx.fillRect(-a, -a, a*2, a*2);
+        ctx.restore();
+      } else if (f.kind === 'bound'){
+        const a = Math.atan2(f.vy, f.vx);
+        ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(a);
+        ctx.beginPath();
+        ctx.moveTo(f.r * 1.5, 0); ctx.lineTo(-f.r, f.r * 0.95); ctx.lineTo(-f.r, -f.r * 0.95);
+        ctx.closePath(); ctx.fill();
+        ctx.restore();
+      } else {
+        ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, 7); ctx.fill();
+      }
+      if (f.kind === 'smart'){
+        ctx.strokeStyle = 'rgba(238,243,251,.85)'; ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.arc(f.x, f.y, f.r * 1.55, 0, 7); ctx.stroke();
+      }
+      if (f.kind === 'dash'){
+        ctx.strokeStyle = 'rgba(238,243,251,' + (f.ph === 'dash' ? .95 : .5) + ')';
+        ctx.lineWidth = 1.6;
+        const rr = f.ph === 'charge' ? f.r * (1.2 + f.pt * 1.5) : f.r * 1.45;
+        ctx.beginPath(); ctx.arc(f.x, f.y, rr, 0, 7); ctx.stroke();
+      }
+    }
+
+    /* 自機 */
+    if (state === ST.PLAY){
+      ctx.fillStyle = buff.boost > 0 ? 'rgba(' + KIND.boost.col + ',.22)' : 'rgba(238,243,251,.14)';
+      ctx.beginPath(); ctx.arc(player.x, player.y, player.r * 2.4, 0, 7); ctx.fill();
+      ctx.fillStyle = '#eef3fb';
+      ctx.beginPath(); ctx.arc(player.x, player.y, player.r, 0, 7); ctx.fill();
+    }
+
+    for (const r of rings){
+      const p = r.t / 0.6;
+      ctx.strokeStyle = 'rgba(' + r.col + ',' + (1 - p) * 0.8 + ')';
+      ctx.lineWidth = (r.big ? 5 : 3) * (1 - p) + 1;
+      ctx.beginPath(); ctx.arc(r.x, r.y, (r.big ? 210*S : 46*S) * p, 0, 7); ctx.stroke();
+    }
+    for (const m of motes){
+      ctx.fillStyle = 'rgba(' + (m.col || '238,243,251') + ',' + Math.max(m.a, 0) + ')';
+      ctx.beginPath(); ctx.arc(m.x, m.y, m.r, 0, 7); ctx.fill();
+    }
+  }
+
+  if (flash > 0 && state === ST.PLAY){
+    ctx.strokeStyle = 'rgba(232,176,75,' + flash*0.5 + ')';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(2, 2, W-4, H-4);
+  }
+  ctx.restore();
+}
+
+document.addEventListener('visibilitychange', () => { last = performance.now(); });
+})();
+</script>
+</body>
+</html>
