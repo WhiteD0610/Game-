@@ -207,6 +207,14 @@ function orientCheck(){
   }
 }
 
+const GIANT_CYCLE = 6;                      // 属性が切り替わる周期（秒）
+const GMODE = [
+  { k:'break', name:'破壊', col:'236,62,46',   sp:0.55, turn:2.2 },
+  { k:'swift', name:'疾走', col:'255,122,58',  sp:1.02, turn:3.6 },
+  { k:'lead',  name:'先読', col:'232,176,75',  sp:0.80, turn:4.6 },
+  { k:'blink', name:'転移', col:'185,140,255', sp:0.45, turn:2.0 },
+];
+const gmode = f => GMODE.find(m => m.k === f.mode) || GMODE[0];
 const FOE = {
   giant: { col:'236,62,46',  name:'巨大' },
   chase: { col:'226,80,63',  name:'追尾' },
@@ -217,10 +225,10 @@ const FOE = {
 };
 function pickKind(lv){
   const w = [['chase', 10]];
-  if (lv >= 2) w.push(['drift', 6]);
+  if (lv >= 2) w.push(['drift', 5]);
+  if (lv >= 2) w.push(['dash',  Math.min(5 + lv * 1.4, 14)]);
   if (lv >= 3) w.push(['smart', Math.min(3 + lv, 12)]);
   if (lv >= 4) w.push(['bound', Math.min(2 + lv * 0.8, 8)]);
-  if (lv >= 6) w.push(['dash',  Math.min(1 + lv * 0.6, 6)]);
   let r = Math.random() * w.reduce((a, b) => a + b[1], 0);
   for (const [k, v] of w){ if ((r -= v) <= 0) return k; }
   return 'chase';
@@ -430,7 +438,9 @@ arm(document.getElementById('btnRetry'));
 /* ---------- 難易度 ---------- */
 const PSPD = () => 424 * S * (buff.boost > 0 ? 1.45 : 1);
 const lvOf = s => 1 + Math.floor(s / 12);
-const foeCount = s => Math.min(2 + Math.floor(s / 8.5), 18);
+const FOE_MAX = 10;
+const foeCount = s => Math.min(2 + Math.floor(s / 8.5), FOE_MAX);
+const FOE_LIFE = () => 18 + Math.random() * 8;   // 寿命（秒）
 const foeSpeed = lv => Math.min(177 + lv * 19, 398) * S * (buff.slow > 0 ? 0.30 : 1);
 const foeTurn  = lv => (3.6 + Math.min(lv * 0.6, 8.2)) * (buff.slow > 0 ? 0.45 : 1);
 const REPEL_R = () => 150 * S;
@@ -547,7 +557,8 @@ function spawn(delay){
     if (!inWall(x, y, 14*S) && Math.hypot(x - player.x, y - player.y) > Math.min(W,H) * 0.42) break;
   }
   const kind = pickKind(level);
-  const f = { x, y, vx:0, vy:0, r:10*S, wake:delay, kind, trail:[], ang:0, ph:'rest', pt:0.5 };
+  const f = { x, y, vx:0, vy:0, r:10*S, wake:delay, kind, trail:[], ang:0, ph:'rest', pt:0.5,
+              age:0, maxAge:FOE_LIFE(), fade:1 };
   if (kind === 'smart') f.r = 10*S;
   if (kind === 'drift') f.r = 12*S;
   if (kind === 'bound') f.r = 8.5*S;
@@ -643,8 +654,26 @@ function step(dt){
     }
   }
 
+  /* 寿命：古い個体から消える（巨大は対象外） */
+  for (let i = foes.length - 1; i >= 0; i--){
+    const f = foes[i];
+    f.age += dt;
+    if (f.fade < 1){
+      f.fade -= dt * 1.6;
+      if (f.fade <= 0) foes.splice(i, 1);
+      continue;
+    }
+    if (f.kind !== 'giant' && f.age > f.maxAge) f.fade = 0.999;
+  }
+  /* 上限超過時も古い順に退場 */
+  const live = foes.filter(f => f.fade >= 1);
+  if (live.length > FOE_MAX){
+    live.sort((a, b) => b.age - a.age);
+    for (let i = 0; i < live.length - FOE_MAX; i++) live[i].fade = 0.999;
+  }
+
   /* 追加投入 */
-  if (foes.length < foeCount(t) && Math.random() < dt * 1.6) spawn(1.0);
+  if (live.length < foeCount(t) && Math.random() < dt * 2.2) spawn(1.0);
 
   /* 追跡者 */
   const spd = foeSpeed(level), turn = foeTurn(level), lead = foeLead(level);
@@ -652,21 +681,45 @@ function step(dt){
   const aim = decoy || player;                       // 分身がいれば囮を追う
   for (const f of foes){
     if (f.wake > 0){ f.wake -= dt; continue; }
+    if (f.fade < 1) continue;                    // 退場中
     if (frozen){
       if (t > 1.2 && buff.invin <= 0 && Math.hypot(f.x - player.x, f.y - player.y) < f.r + player.r) die();
       continue;
     }
 
     if (f.kind === 'giant'){
-      let ax = player.x - f.x, ay = player.y - f.y;
+      /* 一定周期で属性が入れ替わる */
+      f.mt -= dt;
+      if (f.mt <= 0){
+        f.mi = (f.mi + 1) % GMODE.length;
+        f.mode = GMODE[f.mi].k; f.mt = GIANT_CYCLE; f.wt = 2.5;
+        rings.push({ x:f.x, y:f.y, t:0, col:gmode(f).col, big:true });
+        shake = Math.max(shake, 5);
+      }
+      const gm = gmode(f);
+      let ax = (gm.k === 'lead' ? player.x + player.vx * 0.5 : player.x) - f.x;
+      let ay = (gm.k === 'lead' ? player.y + player.vy * 0.5 : player.y) - f.y;
       const d = Math.hypot(ax, ay) || 1;
-      const k = Math.min(2.2 * dt, 1);
-      f.vx += (ax/d*spd*0.55 - f.vx) * k; f.vy += (ay/d*spd*0.55 - f.vy) * k;
+      const k = Math.min(gm.turn * dt, 1);
+      f.vx += (ax/d*spd*gm.sp - f.vx) * k; f.vy += (ay/d*spd*gm.sp - f.vy) * k;
       f.x += f.vx*dt; f.y += f.vy*dt;
       f.x = Math.min(Math.max(f.x, f.r), W - f.r);
       f.y = Math.min(Math.max(f.y, f.r), H - f.r);
-      /* 壁を破壊して進む */
-      for (let i = walls.length - 1; i >= 0; i--){
+      if (gm.k === 'swift' || gm.k === 'lead') resolve(f, f.r);   // 壁に阻まれる
+      if (gm.k === 'blink'){
+        f.wt -= dt;
+        if (f.wt <= 0){
+          f.wt = 2.6;
+          rings.push({ x:f.x, y:f.y, t:0, col:gm.col });
+          const a = Math.random() * 6.28, rr = (170 + Math.random() * 90) * S;
+          f.x = Math.min(Math.max(player.x + Math.cos(a)*rr, f.r), W - f.r);
+          f.y = Math.min(Math.max(player.y + Math.sin(a)*rr, f.r), H - f.r);
+          f.vx = 0; f.vy = 0; f.trail.length = 0;
+          rings.push({ x:f.x, y:f.y, t:0, col:gm.col });
+        }
+      }
+      /* 破壊モードのみ壁を壊して進む */
+      for (let i = walls.length - 1; gm.k === 'break' && i >= 0; i--){
         const w = walls[i];
         const cx = Math.min(Math.max(f.x, w.x), w.x + w.w);
         const cy = Math.min(Math.max(f.y, w.y), w.y + w.h);
@@ -773,7 +826,7 @@ function step(dt){
 
 /* 追尾系が5体密集したら合体して巨大追尾になる */
 function tryMerge(){
-  const cl = foes.filter(f => (f.kind === 'chase' || f.kind === 'smart') && f.wake <= 0);
+  const cl = foes.filter(f => (f.kind === 'chase' || f.kind === 'smart') && f.wake <= 0 && f.fade >= 1);
   if (cl.length < 5) return;
   for (const a of cl){
     const near = cl.filter(b => Math.hypot(b.x - a.x, b.y - a.y) < 82 * S);
@@ -783,7 +836,8 @@ function tryMerge(){
     g.forEach(f => { cx += f.x; cy += f.y; });
     cx /= 5; cy /= 5;
     g.forEach(f => { const i = foes.indexOf(f); if (i >= 0) foes.splice(i, 1); });
-    foes.push({ x:cx, y:cy, vx:0, vy:0, r:27*S, wake:0.35, kind:'giant', trail:[], ang:0, ph:'rest', pt:0 });
+    foes.push({ x:cx, y:cy, vx:0, vy:0, r:27*S, wake:0.35, kind:'giant', trail:[], ang:0, ph:'rest', pt:0,
+                age:0, maxAge:1e9, fade:1, mi:0, mode:GMODE[0].k, mt:GIANT_CYCLE, wt:2.5 });
     rings.push({ x:cx, y:cy, t:0, col:FOE.giant.col, big:true });
     shake = 12;
     for (let i = 0; i < 20; i++){
@@ -836,7 +890,7 @@ function take(it){
     rings.push({ x:player.x, y:player.y, t:0, col:KIND.shield.col, big:true });
   }
   else if (K === 'sweep'){
-    const list = foes.filter(f => f.kind !== 'giant')
+    const list = foes.filter(f => f.kind !== 'giant' && f.fade >= 1)
       .sort((a, b) => Math.hypot(a.x-player.x, a.y-player.y) - Math.hypot(b.x-player.x, b.y-player.y))
       .slice(0, 4);
     for (const f of list){
@@ -1017,7 +1071,9 @@ function draw(){
         ctx.setLineDash([]);
         continue;
       }
-      const col = buff.stop > 0 ? '120,132,170' : (buff.slow > 0 ? '150,150,190' : FOE[f.kind].col);
+      const base = f.kind === 'giant' ? gmode(f).col : FOE[f.kind].col;
+      const col = buff.stop > 0 ? '120,132,170' : (buff.slow > 0 ? '150,150,190' : base);
+      ctx.globalAlpha = f.fade < 1 ? Math.max(f.fade, 0) : 1;
       for (let i = 1; i < f.trail.length; i++){
         const a = i / f.trail.length;
         ctx.strokeStyle = 'rgba(' + col + ',' + a*0.32 + ')';
@@ -1076,6 +1132,18 @@ function draw(){
         const rr = f.ph === 'charge' ? f.r * (1.2 + f.pt * 1.5) : f.r * 1.45;
         ctx.beginPath(); ctx.arc(f.x, f.y, rr, 0, 7); ctx.stroke();
       }
+      if (f.kind === 'giant'){
+        /* 残り時間リング＋属性名 */
+        ctx.strokeStyle = 'rgba(238,243,251,.55)'; ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(f.x, f.y, f.r * 1.45, -1.5708, -1.5708 + 6.2832 * (f.mt / GIANT_CYCLE));
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(238,243,251,.9)';
+        ctx.font = '600 11px system-ui, sans-serif'; ctx.textAlign = 'center';
+        ctx.fillText(gmode(f).name, f.x, f.y + f.r * 2.2);
+        ctx.textAlign = 'start';
+      }
+      ctx.globalAlpha = 1;
     }
 
     /* 自機 */
