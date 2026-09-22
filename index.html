@@ -106,21 +106,19 @@
     <div class="rule"></div>
     <p>追跡者から逃げ続ける。時間が経つほど数が増え、速くなり、種類も増える。壁は盾にも罠にもなる。</p>
     <div class="legend">
-      <div><i style="background:#e2503f;border-radius:50%;transform:none"></i>追尾 ── まっすぐ迫る</div>
-      <div><i style="background:#e8b04b;border-radius:50%;transform:none"></i>先読み ── 進む先へ回り込む（Lv3〜）</div>
-      <div><i style="background:#8fa3c8;transform:none;border-radius:2px"></i>漂流 ── 気まぐれに彷徨う（Lv2〜）</div>
-      <div><i style="background:#ff8fb0"></i>反跳 ── 直進し壁で跳ね返る（Lv4〜）</div>
-      <div><i style="background:#ff7a3a;border-radius:50%;transform:none"></i>突進 ── 狙いを定めて一直線（Lv6〜）</div>
-      <div><i style="background:#5fd6ff"></i>加速 ── 4.5秒間、さらに1.45倍まで加速</div>
-      <div><i style="background:#b98cff"></i>停滞 ── 4秒間、追跡者が鈍る</div>
-      <div><i style="background:#7ee0a8"></i>衝撃 ── 周囲を吹き飛ばし、最寄りの1体を消す</div>
+      <div><i style="background:#e2503f;border-radius:50%;transform:none"></i>追尾 ／ <i style="background:#e8b04b;border-radius:50%;transform:none;margin:0 2px"></i>先読み ／ <i style="background:#8fa3c8;transform:none;border-radius:2px;margin:0 2px"></i>漂流</div>
+      <div><i style="background:#ff8fb0"></i>反跳 ／ <i style="background:#ff7a3a;border-radius:50%;transform:none;margin:0 2px"></i>突進 ／ <i style="background:#ec3e2e;border-radius:50%;transform:none;margin:0 2px"></i>巨大（追尾5体が合体・壁を破壊）</div>
+      <div style="margin-top:4px"><i style="background:#5fd6ff"></i>加速 ／ <i style="background:#b98cff;margin:0 2px"></i>減速 ／ <i style="background:#7ee0a8;margin:0 2px"></i>衝撃 ／ <i style="background:#ffee8c;margin:0 2px"></i>無敵</div>
+      <div><i style="background:#96ffdc"></i>分身 ／ <i style="background:#8296ff;margin:0 2px"></i>瞬間移動 ／ <i style="background:#cdd8eb;margin:0 2px"></i>障壁 ／ <i style="background:#ff8ccd;margin:0 2px"></i>時間停止</div>
+      <div><i style="background:#ffaa5a"></i>排斥 ／ <i style="background:#fafafa;margin:0 2px"></i>掃除</div>
     </div>
-    <p style="font-size:13px">スティック＝固定の円を傾けて移動（位置変更可）／なぞる＝触れた地点へ自機が追従</p>
+    </div>
+    <p style="font-size:13px">なぞる＝指に追従（触れた瞬間の位置関係を保つので自機が指で隠れません）／スティック＝固定の円を傾けて移動（位置変更可）</p>
     <div class="legend" style="display:none">
     </div>
     <button id="btnStart">はじめる</button>
-    <button id="btnStick" class="ghost">操作方式：自動</button>
-    <div class="keys">縦横どちらでもプレイ可。スマホはスティック／なぞるを選択（下のボタン）、PCは <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>・矢印キー</div>
+    <button id="btnStick" class="ghost">操作方式：なぞる</button>
+    <div class="keys">縦横どちらでもプレイ可。スマホはなぞって移動（ボタンでスティックに変更可）、PCは <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>・矢印キー</div>
   </div>
 
   <div class="sheet" id="over" hidden>
@@ -198,7 +196,8 @@ const ST = { READY:0, PLAY:1, OVER:2 };
 let state = ST.READY;
 let t = 0, level = 1, shake = 0, flash = 0, itemTimer = 0;
 let player = null, foes = [], walls = [], items = [], motes = [], rings = [], best = 0;
-const buff = { boost:0, slow:0 };
+const buff = { boost:0, slow:0, invin:0, stop:0, repel:0 };
+let decoy = null;
 let paused = false, editing = false;
 function orientCheck(){
   if (!el.rotate) return;
@@ -212,6 +211,7 @@ function orientCheck(){
 }
 
 const FOE = {
+  giant: { col:'236,62,46',  name:'巨大' },
   chase: { col:'226,80,63',  name:'追尾' },
   smart: { col:'232,176,75', name:'先読み' },
   drift: { col:'143,163,200',name:'漂流' },
@@ -235,6 +235,7 @@ function bounce(o){
   if (o.y < o.r){ o.y = o.r; o.vy = Math.abs(o.vy); }
   if (o.y > H - o.r){ o.y = H - o.r; o.vy = -Math.abs(o.vy); }
   for (const w of walls){
+    if (!w.on) continue;
     const cx = Math.min(Math.max(o.x, w.x), w.x + w.w);
     const cy = Math.min(Math.max(o.y, w.y), w.y + w.h);
     let dx = o.x - cx, dy = o.y - cy, d = Math.hypot(dx, dy);
@@ -257,10 +258,19 @@ function bounce(o){
 }
 
 const KIND = {
-  boost: { col:'95,214,255', name:'加速' },
-  slow:  { col:'185,140,255', name:'停滞' },
-  blast: { col:'126,224,168', name:'衝撃' },
+  boost: { col:'95,214,255',  name:'加速', g:'chev' },
+  slow:  { col:'185,140,255', name:'減速', g:'bars' },
+  blast: { col:'126,224,168', name:'衝撃', g:'rays' },
+  invin: { col:'255,238,140', name:'無敵', g:'ring' },
+  decoy: { col:'150,255,220', name:'分身', g:'dots' },
+  warp:  { col:'130,150,255', name:'瞬間移動', g:'bolt' },
+  shield:{ col:'205,216,235', name:'障壁', g:'arc'  },
+  stop:  { col:'255,140,205', name:'時間停止', g:'pause' },
+  repel: { col:'255,170,90',  name:'排斥', g:'orbit' },
+  sweep: { col:'250,250,250', name:'掃除', g:'cross' },
 };
+const ITEM_POOL = [['boost',3],['slow',2],['blast',2],['sweep',2],['decoy',2],
+                   ['warp',2],['shield',2],['repel',1.5],['stop',1],['invin',1]];
 
 try { best = parseFloat(localStorage.getItem('chaser.best') || '0') || 0; } catch(e){}
 el.best.textContent = '最高 ' + best.toFixed(1) + ' 秒';
@@ -272,15 +282,14 @@ let pointer = null;
 /* ---- 仮想スティック（位置固定） ---- */
 let coarse = false;
 try { coarse = matchMedia('(pointer: coarse)').matches; } catch(e){}
-let stickMode = 'auto';                    // auto | on | off
-try { stickMode = localStorage.getItem('chaser.stick') || 'auto'; } catch(e){}
-let touchMode = stickMode === 'on' ? true : stickMode === 'off' ? false : coarse;
-const STICK_LABEL = { auto:'自動', on:'スティック', off:'なぞる' };
+let stickMode = 'off';                     // off = なぞる / on = スティック
+try { const v = localStorage.getItem('chaser.stick'); if (v === 'on' || v === 'off') stickMode = v; } catch(e){}
+let touchMode = stickMode === 'on';
+const STICK_LABEL = { on:'スティック', off:'なぞる' };
 function applyStickMode(){
-  touchMode = stickMode === 'on' ? true : stickMode === 'off' ? false : coarse;
+  touchMode = stickMode === 'on';
   el.bar.hidden = !touchMode;
-  el.btnStick.textContent = '操作方式：' + STICK_LABEL[stickMode] +
-    (stickMode === 'auto' ? '（' + (touchMode ? 'スティック' : 'なぞる') + '）' : '');
+  el.btnStick.textContent = '操作方式：' + STICK_LABEL[stickMode];
   try { localStorage.setItem('chaser.stick', stickMode); } catch(e){}
   orientCheck();
 }
@@ -290,7 +299,7 @@ function cycleCtrl(e){
   const now = Date.now();
   if (now - ctrlGuard < 300) return;
   ctrlGuard = now;
-  stickMode = stickMode === 'auto' ? 'on' : stickMode === 'on' ? 'off' : 'auto';
+  stickMode = stickMode === 'on' ? 'off' : 'on';
   applyStickMode();
 }
 el.btnStick.addEventListener('click', cycleCtrl);
@@ -329,11 +338,7 @@ function stickSet(p){
   stick.dx = dx / d; stick.dy = dy / d;
   stick.mag = Math.min(d / R, 1);
 }
-function setTouchMode(on){
-  if (on) coarse = true;
-  if (stickMode !== 'auto') return;
-  applyStickMode();
-}
+function setTouchMode(on){ if (on) coarse = true; }
 applyStickMode();
 function setEditing(on){
   editing = on;
@@ -381,14 +386,14 @@ cv.addEventListener('pointerdown', e => {
     if (Math.hypot(p.x - c.x, p.y - c.y) > stickR() * 2.2) return;
     stick.id = e.pointerId; stick.active = true; stickSet(p);
   } else {
-    pointer = p;
+    pointer = { x:p.x, y:p.y, ox:player ? player.x - p.x : 0, oy:player ? player.y - p.y : 0 };
   }
   try { cv.setPointerCapture(e.pointerId); } catch(err){}
 });
 cv.addEventListener('pointermove', e => {
   if (editing){ if (stick.id === e.pointerId) setStickAt(ptFrom(e)); return; }
   if (stick.id === e.pointerId){ stickSet(ptFrom(e)); return; }
-  if (!touchMode && pointer) pointer = ptFrom(e);
+  if (!touchMode && pointer){ const p = ptFrom(e); pointer.x = p.x; pointer.y = p.y; }
 });
 addEventListener('orientationchange', () => setTimeout(resize, 120));
 const drop = e => {
@@ -429,8 +434,9 @@ arm(document.getElementById('btnRetry'));
 const PSPD = () => 424 * S * (buff.boost > 0 ? 1.45 : 1);
 const lvOf = s => 1 + Math.floor(s / 12);
 const foeCount = s => Math.min(2 + Math.floor(s / 8.5), 18);
-const foeSpeed = lv => Math.min(177 + lv * 19, 398) * S * (buff.slow > 0 ? 0.45 : 1);
-const foeTurn  = lv => (3.6 + Math.min(lv * 0.6, 8.2)) * (buff.slow > 0 ? 0.55 : 1);
+const foeSpeed = lv => Math.min(177 + lv * 19, 398) * S * (buff.slow > 0 ? 0.30 : 1);
+const foeTurn  = lv => (3.6 + Math.min(lv * 0.6, 8.2)) * (buff.slow > 0 ? 0.45 : 1);
+const REPEL_R = () => 150 * S;
 const foeLead  = lv => Math.min(0.06 * lv, 0.72);
 
 /* ---------- 壁 ---------- */
@@ -446,7 +452,15 @@ function addWall(){
     const horiz = Math.random() < 0.5;
     const w = horiz ? long : thin, h = horiz ? thin : long;
     if (w > W - m*4 || h > H - m*4) continue;
-    const r = { x: m + Math.random() * (W - w - m*2), y: m + Math.random() * (H - h - m*2), w, h, a:0 };
+    let kind = 'solid';
+    const roll = Math.random();
+    if (level >= 5 && roll < 0.3) kind = 'grow';
+    else if (level >= 3 && roll < 0.58) kind = 'blink';
+    const r = { x: m + Math.random() * (W - w - m*2), y: m + Math.random() * (H - h - m*2),
+                w, h, a:0, kind, on:true, horiz, bw:w, bh:h, cx:0, cy:0,
+                tt: 3 + Math.random()*3, onT: 4.5 + Math.random()*2.5, offT: 2.2 + Math.random()*1.4,
+                ph: Math.random()*6.28, sp: 0.7 + Math.random()*0.5 };
+    r.cx = r.x + w/2; r.cy = r.y + h/2;
     if (walls.some(o => rectsOverlap(r, o, 42 * S))) continue;
     const cx = r.x + w/2, cy = r.y + h/2;
     if (player && Math.hypot(cx - player.x, cy - player.y) < 150 * S) continue;
@@ -454,9 +468,30 @@ function addWall(){
     return r;
   }
 }
+function stepWalls(dt){
+  for (let i = walls.length - 1; i >= 0; i--){
+    const w = walls[i];
+    w.a = Math.min(1, w.a + dt * 2.2);
+    if (w.kind === 'temp'){
+      w.life -= dt;
+      if (w.life <= 0){ walls.splice(i, 1); continue; }
+      w.on = true;
+    } else if (w.kind === 'blink'){
+      w.tt -= dt;
+      if (w.tt <= 0){ w.on = !w.on; w.tt = w.on ? w.onT : w.offT; }
+    } else if (w.kind === 'grow'){
+      w.ph += dt * w.sp;
+      const k = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(w.ph));
+      if (w.horiz){ w.w = w.bw * k; w.x = w.cx - w.w / 2; }
+      else { w.h = w.bh * k; w.y = w.cy - w.h / 2; }
+      w.on = true;
+    } else w.on = true;
+  }
+}
 /* 円と矩形の押し出し（滑りながら止まる） */
 function resolve(o, r){
   for (const w of walls){
+    if (!w.on) continue;
     const cx = Math.min(Math.max(o.x, w.x), w.x + w.w);
     const cy = Math.min(Math.max(o.y, w.y), w.y + w.h);
     let dx = o.x - cx, dy = o.y - cy, d = Math.hypot(dx, dy);
@@ -478,6 +513,7 @@ function resolve(o, r){
 function wallPush(x, y, range){
   let ax = 0, ay = 0;
   for (const w of walls){
+    if (!w.on) continue;
     const cx = Math.min(Math.max(x, w.x), w.x + w.w);
     const cy = Math.min(Math.max(y, w.y), w.y + w.h);
     const dx = x - cx, dy = y - cy, d = Math.hypot(dx, dy);
@@ -486,13 +522,13 @@ function wallPush(x, y, range){
   return [ax, ay];
 }
 function inWall(x, y, pad){
-  return walls.some(w => x > w.x - pad && x < w.x + w.w + pad && y > w.y - pad && y < w.y + w.h + pad);
+  return walls.some(w => w.on && x > w.x - pad && x < w.x + w.w + pad && y > w.y - pad && y < w.y + w.h + pad);
 }
 
 /* ---------- 生成 ---------- */
 function reset(){
   t = 0; level = 1; shake = 0; flash = 0; itemTimer = 5;
-  buff.boost = 0; buff.slow = 0;
+  buff.boost = 0; buff.slow = 0; buff.invin = 0; buff.stop = 0; buff.repel = 0; decoy = null;
   walls = []; items = []; foes = []; motes = []; rings = [];
   player = { x:W/2, y:H/2, vx:0, vy:0, r:11*S, trail:[] };
   for (let i = 0; i < 3; i++) addWall();
@@ -527,8 +563,8 @@ function spawn(delay){
 }
 function dropItem(){
   if (items.length >= 3) return;
-  const pool = ['boost','boost','slow','blast'];
-  const kind = pool[Math.floor(Math.random() * pool.length)];
+  let r = Math.random() * ITEM_POOL.reduce((a, b) => a + b[1], 0), kind = 'boost';
+  for (const [k, v] of ITEM_POOL){ if ((r -= v) <= 0){ kind = k; break; } }
   const m = 46 * S;
   for (let i = 0; i < 40; i++){
     const x = m + Math.random() * (W - m*2), y = m + Math.random() * (H - m*2);
@@ -566,10 +602,10 @@ function step(dt){
   t += dt;
   const nl = lvOf(t);
   if (nl > level){ level = nl; flash = 1; if (level % 2 === 0) addWall(); }
-  for (const w of walls) w.a = Math.min(1, w.a + dt * 2);
+  stepWalls(dt);
 
-  buff.boost = Math.max(0, buff.boost - dt);
-  buff.slow  = Math.max(0, buff.slow  - dt);
+  for (const k in buff) buff[k] = Math.max(0, buff[k] - dt);
+  if (decoy){ decoy.life -= dt; if (decoy.life <= 0) decoy = null; }
 
   /* 自機 */
   let dx = 0, dy = 0;
@@ -585,8 +621,12 @@ function step(dt){
     const k = Math.min(stick.mag / 0.85, 1);   // 外周手前で最大速度
     player.vx = stick.dx * sp * k; player.vy = stick.dy * sp * k;
   } else if (!touchMode && pointer){
-    const ax = pointer.x - player.x, ay = pointer.y - player.y, d = Math.hypot(ax, ay);
-    if (d > 2){ const k = Math.min(d / (26*S), 1); player.vx = ax/d*sp*k; player.vy = ay/d*sp*k; }
+    /* 掴んだ瞬間の指と自機のズレを保ったまま追従し、ズレは徐々に解消する */
+    const decay = Math.pow(0.12, dt);
+    pointer.ox *= decay; pointer.oy *= decay;
+    const tx = pointer.x + pointer.ox, ty = pointer.y + pointer.oy;
+    const ax = tx - player.x, ay = ty - player.y, d = Math.hypot(ax, ay);
+    if (d > 2){ const k = Math.min(d / (24*S), 1); player.vx = ax/d*sp*k; player.vy = ay/d*sp*k; }
     else { player.vx = player.vy = 0; }
   } else { player.vx *= 0.82; player.vy *= 0.82; }
   player.x = Math.min(Math.max(player.x + player.vx*dt, player.r), W - player.r);
@@ -611,13 +651,41 @@ function step(dt){
 
   /* 追跡者 */
   const spd = foeSpeed(level), turn = foeTurn(level), lead = foeLead(level);
+  const frozen = buff.stop > 0;
+  const aim = decoy || player;                       // 分身がいれば囮を追う
   for (const f of foes){
     if (f.wake > 0){ f.wake -= dt; continue; }
+    if (frozen){
+      if (t > 1.2 && buff.invin <= 0 && Math.hypot(f.x - player.x, f.y - player.y) < f.r + player.r) die();
+      continue;
+    }
 
-    if (f.kind === 'chase' || f.kind === 'smart'){
+    if (f.kind === 'giant'){
+      let ax = player.x - f.x, ay = player.y - f.y;
+      const d = Math.hypot(ax, ay) || 1;
+      const k = Math.min(2.2 * dt, 1);
+      f.vx += (ax/d*spd*0.55 - f.vx) * k; f.vy += (ay/d*spd*0.55 - f.vy) * k;
+      f.x += f.vx*dt; f.y += f.vy*dt;
+      f.x = Math.min(Math.max(f.x, f.r), W - f.r);
+      f.y = Math.min(Math.max(f.y, f.r), H - f.r);
+      /* 壁を破壊して進む */
+      for (let i = walls.length - 1; i >= 0; i--){
+        const w = walls[i];
+        const cx = Math.min(Math.max(f.x, w.x), w.x + w.w);
+        const cy = Math.min(Math.max(f.y, w.y), w.y + w.h);
+        if (Math.hypot(f.x - cx, f.y - cy) < f.r){
+          for (let j = 0; j < 10; j++){
+            const a = Math.random()*6.28, v = (40 + Math.random()*150) * S;
+            motes.push({ x:cx, y:cy, vx:Math.cos(a)*v, vy:Math.sin(a)*v, a:1, r:2*S, col:'127,146,184' });
+          }
+          walls.splice(i, 1); shake = Math.max(shake, 6);
+        }
+      }
+
+    } else if (f.kind === 'chase' || f.kind === 'smart'){
       const sm = f.kind === 'smart';
-      const tx = player.x + (sm ? player.vx * lead : 0);
-      const ty = player.y + (sm ? player.vy * lead : 0);
+      const tx = aim.x + (sm && !decoy ? player.vx * lead : 0);
+      const ty = aim.y + (sm && !decoy ? player.vy * lead : 0);
       let ax = tx - f.x, ay = ty - f.y;
       const d = Math.hypot(ax, ay) || 1;
       ax /= d; ay /= d;
@@ -657,7 +725,7 @@ function step(dt){
         if (f.pt <= 0){ f.ph = 'charge'; f.pt = 0.85; }
       } else if (f.ph === 'charge'){
         f.vx *= 0.8; f.vy *= 0.8;
-        if (f.pt > 0.3) f.ang = Math.atan2(player.y - f.y, player.x - f.x);
+        if (f.pt > 0.3) f.ang = Math.atan2(aim.y - f.y, aim.x - f.x);
         if (f.pt <= 0){
           f.ph = 'dash'; f.pt = 0.62;
           const v = spd * 2.4;
@@ -671,10 +739,22 @@ function step(dt){
       resolve(f, f.r);
     }
 
+    /* 排斥フィールド */
+    if (buff.repel > 0){
+      const RR = REPEL_R() + f.r;
+      const dx = f.x - player.x, dy = f.y - player.y, d = Math.hypot(dx, dy) || 1;
+      if (d < RR){
+        const nx = dx/d, ny = dy/d;
+        f.x = player.x + nx*RR; f.y = player.y + ny*RR;
+        const dot = f.vx*nx + f.vy*ny;
+        if (dot < 0){ f.vx -= 2*dot*nx; f.vy -= 2*dot*ny; }
+      }
+    }
     f.trail.push({x:f.x, y:f.y});
     if (f.trail.length > 9) f.trail.shift();
-    if (t > 1.2 && Math.hypot(f.x - player.x, f.y - player.y) < f.r + player.r) die();
+    if (t > 1.2 && buff.invin <= 0 && Math.hypot(f.x - player.x, f.y - player.y) < f.r + player.r) die();
   }
+  tryMerge();
 
   for (const p of player.trail) p.a -= dt * (buff.boost > 0 ? 1.5 : 2.4);
   while (player.trail.length && player.trail[0].a <= 0) player.trail.shift();
@@ -687,9 +767,34 @@ function step(dt){
   el.lv.textContent = 'Lv ' + level;
   el.cnt.textContent = '追跡者 ' + foes.length;
   let b = '';
-  if (buff.boost > 0) b += '<div style="color:rgb(' + KIND.boost.col + ')">加速 ' + buff.boost.toFixed(1) + '</div>';
-  if (buff.slow  > 0) b += '<div style="color:rgb(' + KIND.slow.col  + ')">停滞 ' + buff.slow.toFixed(1)  + '</div>';
+  for (const k of ['boost','slow','invin','stop','repel']){
+    if (buff[k] > 0) b += '<div style="color:rgb(' + KIND[k].col + ')">' + KIND[k].name + ' ' + buff[k].toFixed(1) + '</div>';
+  }
+  if (decoy) b += '<div style="color:rgb(' + KIND.decoy.col + ')">分身 ' + decoy.life.toFixed(1) + '</div>';
   el.buff.innerHTML = b;
+}
+
+/* 追尾系が5体密集したら合体して巨大追尾になる */
+function tryMerge(){
+  const cl = foes.filter(f => (f.kind === 'chase' || f.kind === 'smart') && f.wake <= 0);
+  if (cl.length < 5) return;
+  for (const a of cl){
+    const near = cl.filter(b => Math.hypot(b.x - a.x, b.y - a.y) < 82 * S);
+    if (near.length < 5) continue;
+    const g = near.slice(0, 5);
+    let cx = 0, cy = 0;
+    g.forEach(f => { cx += f.x; cy += f.y; });
+    cx /= 5; cy /= 5;
+    g.forEach(f => { const i = foes.indexOf(f); if (i >= 0) foes.splice(i, 1); });
+    foes.push({ x:cx, y:cy, vx:0, vy:0, r:27*S, wake:0.35, kind:'giant', trail:[], ang:0, ph:'rest', pt:0 });
+    rings.push({ x:cx, y:cy, t:0, col:FOE.giant.col, big:true });
+    shake = 12;
+    for (let i = 0; i < 20; i++){
+      const a2 = Math.random()*6.28, v = (60 + Math.random()*200) * S;
+      motes.push({ x:cx, y:cy, vx:Math.cos(a2)*v, vy:Math.sin(a2)*v, a:1, r:2.5*S, col:FOE.giant.col });
+    }
+    return;
+  }
 }
 
 function take(it){
@@ -698,8 +803,55 @@ function take(it){
     const a = Math.random()*6.28, v = (40 + Math.random()*140) * S;
     motes.push({ x:it.x, y:it.y, vx:Math.cos(a)*v, vy:Math.sin(a)*v, a:1, r:2*S, col:KIND[it.kind].col });
   }
-  if (it.kind === 'boost') buff.boost = 4.5;
-  else if (it.kind === 'slow') buff.slow = 4;
+  const K = it.kind;
+  if (K === 'boost'){ buff.boost = 4.5; }
+  else if (K === 'slow'){ buff.slow = 6; }
+  else if (K === 'invin'){ buff.invin = 3; }
+  else if (K === 'stop'){ buff.stop = 2; }
+  else if (K === 'repel'){ buff.repel = 6; }
+  else if (K === 'decoy'){
+    decoy = { x:player.x, y:player.y, life:5 };
+    rings.push({ x:player.x, y:player.y, t:0, col:KIND.decoy.col });
+  }
+  else if (K === 'warp'){
+    let bx = player.x, by = player.y, bs = -1;
+    for (let i = 0; i < 70; i++){
+      const x = 46*S + Math.random()*(W - 92*S), y = 46*S + Math.random()*(H - 92*S);
+      if (inWall(x, y, 18*S)) continue;
+      let m = 1e9;
+      for (const f of foes) m = Math.min(m, Math.hypot(f.x - x, f.y - y));
+      if (m > bs){ bs = m; bx = x; by = y; }
+    }
+    rings.push({ x:player.x, y:player.y, t:0, col:KIND.warp.col, big:true });
+    player.x = bx; player.y = by; player.vx = 0; player.vy = 0; player.trail.length = 0;
+    rings.push({ x:bx, y:by, t:0, col:KIND.warp.col, big:true });
+  }
+  else if (K === 'shield'){
+    const R = 78*S, th = 15*S, L = 78*S;
+    for (let i = 0; i < 4; i++){
+      const a = i * Math.PI / 2;
+      const cx = player.x + Math.cos(a) * R, cy = player.y + Math.sin(a) * R;
+      const horiz = Math.abs(Math.cos(a)) < 0.5;
+      const w = horiz ? L : th, h = horiz ? th : L;
+      walls.push({ x:cx - w/2, y:cy - h/2, w, h, a:0, kind:'temp', on:true, life:7,
+                   horiz, bw:w, bh:h, cx, cy, tt:0, onT:0, offT:0, ph:0, sp:0 });
+    }
+    rings.push({ x:player.x, y:player.y, t:0, col:KIND.shield.col, big:true });
+  }
+  else if (K === 'sweep'){
+    const list = foes.filter(f => f.kind !== 'giant')
+      .sort((a, b) => Math.hypot(a.x-player.x, a.y-player.y) - Math.hypot(b.x-player.x, b.y-player.y))
+      .slice(0, 4);
+    for (const f of list){
+      rings.push({ x:f.x, y:f.y, t:0, col:KIND.sweep.col });
+      for (let i = 0; i < 8; i++){
+        const a = Math.random()*6.28, v = (40 + Math.random()*130) * S;
+        motes.push({ x:f.x, y:f.y, vx:Math.cos(a)*v, vy:Math.sin(a)*v, a:1, r:2*S, col:FOE[f.kind].col });
+      }
+      const i = foes.indexOf(f); if (i >= 0) foes.splice(i, 1);
+    }
+    shake = 7;
+  }
   else {
     const R = 210 * S;
     let near = null, nd = Infinity;
@@ -713,7 +865,7 @@ function take(it){
         if (f.kind !== 'bound' && f.kind !== 'drift') f.wake = 0.45;
       }
     }
-    if (near) foes.splice(foes.indexOf(near), 1);
+    if (near && near.kind !== 'giant') foes.splice(foes.indexOf(near), 1);
     shake = 9;
     rings.push({ x:player.x, y:player.y, t:0, col:KIND.blast.col, big:true });
   }
@@ -761,11 +913,35 @@ function draw(){
   if (state !== ST.READY){
     /* 壁 */
     for (const w of walls){
-      ctx.globalAlpha = w.a;
-      ctx.fillStyle = '#1a2949';
+      if (!w.on){
+        ctx.strokeStyle = 'rgba(127,146,184,' + (0.12 + 0.12*Math.abs(Math.sin(w.tt*4))) + ')';
+        ctx.lineWidth = 1; ctx.setLineDash([6, 6]);
+        ctx.strokeRect(w.x + .5, w.y + .5, w.w - 1, w.h - 1);
+        ctx.setLineDash([]);
+        continue;
+      }
+      let al = w.a;
+      if (w.kind === 'blink' && w.tt < 1.2) al *= 0.45 + 0.55 * Math.abs(Math.sin(w.tt * 12));
+      if (w.kind === 'temp'){
+        al *= w.life < 1.6 ? (0.35 + 0.65 * Math.abs(Math.sin(w.life * 9))) : 1;
+        ctx.globalAlpha = al;
+        ctx.fillStyle = 'rgba(' + KIND.shield.col + ',.5)';
+        ctx.fillRect(w.x, w.y, w.w, w.h);
+        ctx.strokeStyle = 'rgba(' + KIND.shield.col + ',.95)'; ctx.lineWidth = 1.4;
+        ctx.strokeRect(w.x + .5, w.y + .5, w.w - 1, w.h - 1);
+        ctx.globalAlpha = 1;
+        continue;
+      }
+      ctx.globalAlpha = al;
+      ctx.fillStyle = w.kind === 'grow' ? '#213259' : '#1a2949';
       ctx.fillRect(w.x, w.y, w.w, w.h);
       ctx.fillStyle = 'rgba(127,146,184,.34)';
       ctx.fillRect(w.x, w.y, w.w, Math.max(2, 2*S));
+      if (w.kind === 'grow'){
+        ctx.fillStyle = 'rgba(232,176,75,.55)';
+        if (w.horiz){ ctx.fillRect(w.x, w.y, 3*S, w.h); ctx.fillRect(w.x + w.w - 3*S, w.y, 3*S, w.h); }
+        else { ctx.fillRect(w.x, w.y, w.w, 3*S); ctx.fillRect(w.x, w.y + w.h - 3*S, w.w, 3*S); }
+      }
       ctx.strokeStyle = 'rgba(7,13,28,.6)'; ctx.lineWidth = 1;
       ctx.strokeRect(w.x + .5, w.y + .5, w.w - 1, w.h - 1);
       ctx.globalAlpha = 1;
@@ -784,10 +960,41 @@ function draw(){
       ctx.fillStyle = 'rgb(' + col + ')';
       const s = it.r * pulse;
       ctx.beginPath(); ctx.moveTo(0,-s); ctx.lineTo(s,0); ctx.lineTo(0,s); ctx.lineTo(-s,0); ctx.closePath(); ctx.fill();
-      ctx.strokeStyle = 'rgba(238,243,251,.9)'; ctx.lineWidth = 1.4;
-      ctx.beginPath(); ctx.moveTo(0,-s*.45); ctx.lineTo(s*.45,0); ctx.lineTo(0,s*.45); ctx.lineTo(-s*.45,0); ctx.closePath(); ctx.stroke();
+      ctx.rotate(-it.spin);
+      ctx.strokeStyle = 'rgba(13,23,48,.95)'; ctx.fillStyle = 'rgba(13,23,48,.95)';
+      ctx.lineWidth = 1.8; ctx.lineCap = 'round';
+      const q = s * 0.46, g = KIND[it.kind].g;
+      ctx.beginPath();
+      if (g === 'chev'){ ctx.moveTo(-q*.7,-q); ctx.lineTo(q*.4,0); ctx.lineTo(-q*.7,q); ctx.stroke(); }
+      else if (g === 'bars'){ ctx.moveTo(-q,-q*.45); ctx.lineTo(q,-q*.45); ctx.moveTo(-q,q*.45); ctx.lineTo(q,q*.45); ctx.stroke(); }
+      else if (g === 'rays'){ for (let i=0;i<4;i++){ const a=i*Math.PI/2+Math.PI/4; ctx.moveTo(Math.cos(a)*q*.4,Math.sin(a)*q*.4); ctx.lineTo(Math.cos(a)*q,Math.sin(a)*q);} ctx.stroke(); }
+      else if (g === 'ring'){ ctx.arc(0,0,q*.72,0,7); ctx.stroke(); }
+      else if (g === 'dots'){ ctx.arc(-q*.45,0,q*.34,0,7); ctx.fill(); ctx.beginPath(); ctx.arc(q*.45,0,q*.34,0,7); ctx.fill(); }
+      else if (g === 'bolt'){ ctx.moveTo(q*.35,-q); ctx.lineTo(-q*.3,0); ctx.lineTo(q*.2,0); ctx.lineTo(-q*.35,q); ctx.stroke(); }
+      else if (g === 'arc'){ ctx.arc(0,q*.35,q*.85,Math.PI*1.15,Math.PI*1.85); ctx.stroke(); }
+      else if (g === 'pause'){ ctx.moveTo(-q*.4,-q*.7); ctx.lineTo(-q*.4,q*.7); ctx.moveTo(q*.4,-q*.7); ctx.lineTo(q*.4,q*.7); ctx.stroke(); }
+      else if (g === 'orbit'){ ctx.arc(0,0,q*.3,0,7); ctx.stroke(); ctx.beginPath(); ctx.arc(0,0,q*.85,0,7); ctx.setLineDash([3,3]); ctx.stroke(); ctx.setLineDash([]); }
+      else { ctx.moveTo(-q*.6,-q*.6); ctx.lineTo(q*.6,q*.6); ctx.moveTo(q*.6,-q*.6); ctx.lineTo(-q*.6,q*.6); ctx.stroke(); }
       ctx.restore();
       ctx.globalAlpha = 1;
+    }
+
+    /* 分身 */
+    if (decoy){
+      const pl = 0.5 + 0.5 * Math.sin(t * 9);
+      ctx.strokeStyle = 'rgba(' + KIND.decoy.col + ',' + (0.55 + 0.35*pl) + ')';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(decoy.x, decoy.y, player.r * (1 + 0.25*pl), 0, 7); ctx.stroke();
+      ctx.beginPath(); ctx.arc(decoy.x, decoy.y, player.r * 2.3, 0, 7);
+      ctx.strokeStyle = 'rgba(' + KIND.decoy.col + ',.2)'; ctx.stroke();
+    }
+
+    /* 排斥フィールド */
+    if (buff.repel > 0){
+      ctx.strokeStyle = 'rgba(' + KIND.repel.col + ',' + (0.2 + 0.25*Math.abs(Math.sin(t*4))) + ')';
+      ctx.lineWidth = 2; ctx.setLineDash([10, 8]);
+      ctx.beginPath(); ctx.arc(player.x, player.y, REPEL_R(), 0, 7); ctx.stroke();
+      ctx.setLineDash([]);
     }
 
     /* 自機の残光 */
@@ -813,7 +1020,7 @@ function draw(){
         ctx.setLineDash([]);
         continue;
       }
-      const col = buff.slow > 0 ? '150,150,190' : FOE[f.kind].col;
+      const col = buff.stop > 0 ? '120,132,170' : (buff.slow > 0 ? '150,150,190' : FOE[f.kind].col);
       for (let i = 1; i < f.trail.length; i++){
         const a = i / f.trail.length;
         ctx.strokeStyle = 'rgba(' + col + ',' + a*0.32 + ')';
@@ -847,6 +1054,18 @@ function draw(){
         ctx.moveTo(f.r * 1.5, 0); ctx.lineTo(-f.r, f.r * 0.95); ctx.lineTo(-f.r, -f.r * 0.95);
         ctx.closePath(); ctx.fill();
         ctx.restore();
+      } else if (f.kind === 'giant'){
+        ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, 7); ctx.fill();
+        ctx.strokeStyle = 'rgba(13,23,48,.75)'; ctx.lineWidth = 2;
+        for (let i = 0; i < 5; i++){
+          const a = t * 0.9 + i * 1.2566;
+          ctx.beginPath();
+          ctx.moveTo(f.x, f.y);
+          ctx.lineTo(f.x + Math.cos(a) * f.r, f.y + Math.sin(a) * f.r);
+          ctx.stroke();
+        }
+        ctx.strokeStyle = 'rgba(238,243,251,.7)'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(f.x, f.y, f.r * 1.2, 0, 7); ctx.stroke();
       } else {
         ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, 7); ctx.fill();
       }
@@ -866,6 +1085,13 @@ function draw(){
     if (state === ST.PLAY){
       ctx.fillStyle = buff.boost > 0 ? 'rgba(' + KIND.boost.col + ',.22)' : 'rgba(238,243,251,.14)';
       ctx.beginPath(); ctx.arc(player.x, player.y, player.r * 2.4, 0, 7); ctx.fill();
+      if (buff.invin > 0){
+        for (let i = 0; i < 3; i++){
+          ctx.strokeStyle = 'hsla(' + ((t * 220 + i * 120) % 360) + ',90%,70%,' + (buff.invin < 1 ? 0.4 + 0.5*Math.abs(Math.sin(buff.invin*12)) : 0.85) + ')';
+          ctx.lineWidth = 2.2;
+          ctx.beginPath(); ctx.arc(player.x, player.y, player.r * (1.5 + i * 0.45), i * 2, i * 2 + 4.2); ctx.stroke();
+        }
+      }
       ctx.fillStyle = '#eef3fb';
       ctx.beginPath(); ctx.arc(player.x, player.y, player.r, 0, 7); ctx.fill();
     }
