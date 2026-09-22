@@ -59,14 +59,19 @@
   }
   button:hover{background:#fff;transform:translateY(-1px)}
   button:focus-visible{outline:2px solid var(--kin);outline-offset:3px}
-  .mini{
+  .mini-bar{
     position:absolute;left:50%;transform:translateX(-50%);
     bottom:calc(env(safe-area-inset-bottom,0px) + 12px);
+    display:flex;gap:8px;z-index:3;
+  }
+  .mini-bar[hidden]{display:none}
+  .mini{
     font-size:12px;letter-spacing:.06em;padding:9px 16px;
     background:rgba(238,243,251,.09);color:var(--mist);border:1px solid var(--ai-line);
   }
-  .mini:hover{background:rgba(238,243,251,.16);transform:translateX(-50%)}
+  .mini:hover{background:rgba(238,243,251,.18);color:var(--haku);transform:none}
   .mini[hidden]{display:none}
+  .mini.on{background:var(--kin);color:var(--ai-deep);border-color:var(--kin)}
   .ghost{
     background:transparent;color:var(--mist);border:1px solid var(--ai-line);
     font-size:13px;padding:10px 22px;
@@ -91,7 +96,10 @@
     </div>
   </div>
 
-  <button id="side" class="mini" hidden>操作 左右</button>
+  <div id="bar" class="mini-bar" hidden>
+    <button id="btnMove" class="mini">スティック位置</button>
+    <button id="btnResetPos" class="mini" hidden>初期位置</button>
+  </div>
 
   <div class="sheet" id="start">
     <h1>逃</h1>
@@ -109,7 +117,7 @@
     </div>
     <button id="btnStart">はじめる</button>
     <button id="btnStick" class="ghost">スティック表示：自動</button>
-    <div class="keys">画面のどこでも押せば開始 ／ スマホは横向き＋下のスティックで移動（左右入替可）、PCは <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>・矢印キー</div>
+    <div class="keys">画面のどこでも押せば開始 ／ 縦横どちらでもプレイ可。スマホはスティックで移動（位置は変更できます）、PCは <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>・矢印キー</div>
   </div>
 
   <div class="sheet" id="over" hidden>
@@ -122,13 +130,13 @@
   </div>
 
   <div class="sheet" id="rotate" hidden>
-    <svg id="rotIcon" width="86" height="86" viewBox="0 0 86 86" aria-hidden="true">
+    <svg id="rotIcon" width="86" height="86" viewBox="0 0 86 86" aria-hidden="true" style="display:none">
       <rect x="30" y="12" width="26" height="46" rx="4" fill="none" stroke="#eef3fb" stroke-width="2.4"/>
       <line x1="38" y1="18" x2="48" y2="18" stroke="#7f92b8" stroke-width="2.4" stroke-linecap="round"/>
       <path d="M22 66 A 22 22 0 0 0 64 66" fill="none" stroke="#e2503f" stroke-width="2.4" stroke-linecap="round"/>
       <path d="M64 66 l-7 -6 M64 66 l-8 4" fill="none" stroke="#e2503f" stroke-width="2.4" stroke-linecap="round"/>
     </svg>
-    <p id="rotText">端末を横向きにしてください</p>
+    <p id="rotText">一時停止中</p>
     <button id="btnResume" hidden>再開</button>
   </div>
 </div>
@@ -145,7 +153,9 @@ const el = {
   start: document.getElementById('start'), over: document.getElementById('over'),
   finalT: document.getElementById('finalT'), detail: document.getElementById('detail'),
   verdict: document.getElementById('verdict'),
-  side: document.getElementById('side'),
+  bar: document.getElementById('bar'),
+  btnMove: document.getElementById('btnMove'),
+  btnResetPos: document.getElementById('btnResetPos'),
   rotate: document.getElementById('rotate'),
   rotText: document.getElementById('rotText'),
   btnResume: document.getElementById('btnResume'),
@@ -157,7 +167,20 @@ let W = 0, H = 0, S = 1;
 function resize(){
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const r = cv.getBoundingClientRect();
+  const pw = W, ph = H;
   W = Math.max(320, r.width); H = Math.max(320, r.height);
+  if (pw && ph && (pw !== W || ph !== H)){
+    const kx = W / pw, ky = H / ph;
+    try {
+      if (player){ player.x *= kx; player.y *= ky; }
+      foes.forEach(f => { f.x *= kx; f.y *= ky; f.trail.length = 0; });
+      items.forEach(o => { o.x *= kx; o.y *= ky; });
+      walls.forEach(w => { w.x *= kx; w.y *= ky; w.w *= kx; w.h *= ky; });
+      motes.length = 0; rings.length = 0;
+      /* 縦横が入れ替わったら事故防止で一時停止 */
+      if (state === ST.PLAY && (pw > ph) !== (W > H)){ paused = true; }
+    } catch(e){}
+  }
   cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   S = Math.min(Math.max(Math.min(W, H) / 640, 0.62), 1.55);
@@ -169,42 +192,21 @@ addEventListener('orientationchange', resize);
 resize();
 
 const ST = { READY:0, PLAY:1, OVER:2 };
-let paused = false;
+let state = ST.READY;
+let t = 0, level = 1, shake = 0, flash = 0, itemTimer = 0;
+let player = null, foes = [], walls = [], items = [], motes = [], rings = [], best = 0;
+const buff = { boost:0, slow:0 };
+let paused = false, editing = false;
 function orientCheck(){
   if (!el.rotate) return;
-  const portrait = touchMode && H > W * 1.02;
-  if (portrait){
-    if (state === ST.PLAY) paused = true;
-    el.rotText.textContent = '端末を横向きにしてください';
-    el.btnResume.hidden = true;
-    if (el.rotIcon) el.rotIcon.style.opacity = 1;
-    el.rotate.hidden = false;
-  } else if (paused){
-    el.rotText.textContent = '準備ができたら再開';
+  if (paused && !editing){
+    el.rotText.textContent = '一時停止中';
     el.btnResume.hidden = false;
-    if (el.rotIcon) el.rotIcon.style.opacity = 0.25;
     el.rotate.hidden = false;
   } else {
     el.rotate.hidden = true;
   }
 }
-/* 開始時に全画面＋横向き固定を試みる（非対応環境は案内へフォールバック） */
-function goLandscape(){
-  if (!touchMode) return;
-  try {
-    const lock = () => {
-      if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {});
-    };
-    const d = document.documentElement;
-    if (!document.fullscreenElement && d.requestFullscreen){
-      d.requestFullscreen({ navigationUI:'hide' }).then(lock).catch(lock);
-    } else lock();
-  } catch(e){}
-}
-let state = ST.READY;
-let t = 0, level = 1, shake = 0, flash = 0, itemTimer = 0;
-let player = null, foes = [], walls = [], items = [], motes = [], rings = [], best = 0;
-const buff = { boost:0, slow:0 };
 
 const FOE = {
   chase: { col:'226,80,63',  name:'追尾' },
@@ -273,7 +275,7 @@ let touchMode = stickMode === 'on' ? true : stickMode === 'off' ? false : coarse
 const STICK_LABEL = { auto:'自動', on:'常に表示', off:'使わない' };
 function applyStickMode(){
   touchMode = stickMode === 'on' ? true : stickMode === 'off' ? false : coarse;
-  el.side.hidden = !touchMode;
+  el.bar.hidden = !touchMode;
   el.btnStick.textContent = 'スティック表示：' + STICK_LABEL[stickMode];
   try { localStorage.setItem('chaser.stick', stickMode); } catch(e){}
   orientCheck();
@@ -284,13 +286,31 @@ el.btnStick.addEventListener('click', e => {
   applyStickMode();
 });
 el.btnStick.addEventListener('pointerup', e => e.stopPropagation());
-let stickSide = 'left';
-try { stickSide = localStorage.getItem('chaser.side') === 'right' ? 'right' : 'left'; } catch(e){}
 const stick = { id:null, active:false, dx:0, dy:0, mag:0 };
 const stickR = () => Math.min(Math.max(Math.min(W, H) * 0.155, 52), 96);
+/* 縦・横それぞれの配置を画面比率で保持 */
+let stickAt = { land:null, port:null };
+try {
+  const raw = localStorage.getItem('chaser.stickpos');
+  if (raw){ const o = JSON.parse(raw); if (o && typeof o === 'object') stickAt = { land:o.land || null, port:o.port || null }; }
+} catch(e){}
+const orientKey = () => (H > W ? 'port' : 'land');
+function saveStickAt(){ try { localStorage.setItem('chaser.stickpos', JSON.stringify(stickAt)); } catch(e){} }
 function stickPos(){
-  const R = stickR(), m = 24 + R;
-  return { x: stickSide === 'left' ? m : W - m, y: H - m };
+  const R = stickR(), m = R + 16;
+  const a = stickAt[orientKey()];
+  if (a) return {
+    x: Math.min(Math.max(a.x * W, m), W - m),
+    y: Math.min(Math.max(a.y * H, m), H - m),
+  };
+  return { x: m + 8, y: H - m - 8 };              // 既定は左下
+}
+function setStickAt(p){
+  const R = stickR(), m = R + 16;
+  stickAt[orientKey()] = {
+    x: Math.min(Math.max(p.x, m), W - m) / W,
+    y: Math.min(Math.max(p.y, m), H - m) / H,
+  };
 }
 function stickSet(p){
   const c = stickPos(), R = stickR();
@@ -306,11 +326,22 @@ function setTouchMode(on){
   applyStickMode();
 }
 applyStickMode();
-el.side.addEventListener('click', e => {
+function setEditing(on){
+  editing = on;
+  if (on){ paused = true; stick.id = null; stick.active = false; stick.mag = 0; }
+  else { saveStickAt(); last = performance.now(); }
+  el.btnMove.textContent = on ? '完了' : 'スティック位置';
+  el.btnMove.classList.toggle('on', on);
+  el.btnResetPos.hidden = !on;
+  orientCheck();
+}
+el.btnMove.addEventListener('click', e => { e.stopPropagation(); setEditing(!editing); if (!editing) paused = false; });
+el.btnMove.addEventListener('pointerup', e => e.stopPropagation());
+el.btnResetPos.addEventListener('click', e => {
   e.stopPropagation();
-  stickSide = stickSide === 'left' ? 'right' : 'left';
-  try { localStorage.setItem('chaser.side', stickSide); } catch(err){}
+  stickAt[orientKey()] = null; saveStickAt();
 });
+el.btnResetPos.addEventListener('pointerup', e => e.stopPropagation());
 addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
@@ -322,8 +353,9 @@ addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
 function ptFrom(e){ const r = cv.getBoundingClientRect(); return { x:e.clientX - r.left, y:e.clientY - r.top }; }
 cv.addEventListener('pointerdown', e => {
   if (e.pointerType === 'touch') setTouchMode(true);
-  if (state !== ST.PLAY){ safeReset(); return; }
+  if (state !== ST.PLAY && !editing){ safeReset(); return; }
   const p = ptFrom(e);
+  if (editing){ setStickAt(p); stick.id = e.pointerId; try { cv.setPointerCapture(e.pointerId); } catch(err){} return; }
   if (touchMode){
     if (stick.id !== null) return;
     const c = stickPos();
@@ -335,6 +367,7 @@ cv.addEventListener('pointerdown', e => {
   try { cv.setPointerCapture(e.pointerId); } catch(err){}
 });
 cv.addEventListener('pointermove', e => {
+  if (editing){ if (stick.id === e.pointerId) setStickAt(ptFrom(e)); return; }
   if (stick.id === e.pointerId){ stickSet(ptFrom(e)); return; }
   if (!touchMode && pointer) pointer = ptFrom(e);
 });
@@ -350,7 +383,6 @@ function safeReset(){
   const now = Date.now();
   if (now - guard < 350) return;
   guard = now;
-  goLandscape();
   try { reset(); }
   catch(err){
     el.verdict.textContent = '起動エラー';
@@ -832,7 +864,7 @@ function draw(){
   }
 
   /* 仮想スティック */
-  if (touchMode && state === ST.PLAY){
+  if (touchMode && (state === ST.PLAY || editing)){
     const c = stickPos(), R = stickR();
     ctx.fillStyle = 'rgba(238,243,251,' + (stick.active ? .11 : .075) + ')';
     ctx.beginPath(); ctx.arc(c.x, c.y, R, 0, 7); ctx.fill();
@@ -842,6 +874,14 @@ function draw(){
     ctx.strokeStyle = 'rgba(238,243,251,.18)';
     ctx.beginPath(); ctx.moveTo(c.x - R*.3, c.y); ctx.lineTo(c.x + R*.3, c.y);
     ctx.moveTo(c.x, c.y - R*.3); ctx.lineTo(c.x, c.y + R*.3); ctx.stroke();
+    if (editing){
+      ctx.strokeStyle = 'rgba(232,176,75,.9)'; ctx.lineWidth = 2; ctx.setLineDash([7, 6]);
+      ctx.beginPath(); ctx.arc(c.x, c.y, R + 8, 0, 7); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(238,243,251,.85)';
+      ctx.font = '500 14px system-ui, sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('置きたい場所をタップ／ドラッグ', W/2, 42);
+      ctx.textAlign = 'start';
+    }
     const kx = c.x + stick.dx * stick.mag * R, ky = c.y + stick.dy * stick.mag * R;
     const kr = R * 0.36;
     ctx.fillStyle = 'rgba(' + (buff.boost > 0 ? KIND.boost.col : '238,243,251') + ',' + (stick.active ? .62 : .42) + ')';
